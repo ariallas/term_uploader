@@ -71,30 +71,14 @@ class SqlTransformer:
         if 'name' not in self.common_data and 'formula' not in self.common_data:
             raise Exception("No substance name or formula found")
 
-    @staticmethod
-    def insert_sequence(table, values):
-        return "select count(*) into row_count from {0};\n" \
-               "insert into {0} values (row_count + 1, {1}) returning id into substance_id;\n".format(table, values)
-
     def get_or_create_substance_id(self):
         return "select id from ont.chemical_substances cs into substance_id " \
                "where chemical_formula='{0}' or substance_name='{1}';\n" \
-               "if substance_id is NULL then\n{2}end if;\n".format(
+               "if substance_id is NULL then\n" \
+               "\tinsert into ont.chemical_substances values (nextval('chemical_substances_id_seq'), '{0}', '{1}');\n" \
+               "end if;\n".format(
                 self.common_data['name'],
-                self.common_data['formula'],
-                self.insert_sequence("ont.chemical_substances",
-                                     "'{0}', '{1}'".format(self.common_data['name'],
-                                                           self.common_data['formula'])))
-
-    def get_state_id(self):
-        return "select id from ont.states st into substance_id " \
-               "where chemical_formula='{0}' or substance_name='{1}';\n" \
-               "if substance_id is NULL then\n{2}end if;\n".format(
-                self.common_data['name'],
-                self.common_data['formula'],
-                self.insert_sequence("ont.chemical_substances",
-                                     "'{0}', '{1}'".format(self.common_data['name'],
-                                                           self.common_data['formula'])))
+                self.common_data['formula'])
 
     def generate_sql(self):
         xls_reader = XlsReader()
@@ -105,15 +89,13 @@ class SqlTransformer:
 
         self.check_data()
 
-        sql = "DO $$\ndeclare " \
-              "row_count bigint;\n" \
-              "substance_id bigint;" \
-              "\nbegin\n"
+        sql = "DO $$\n\ndeclare\n" \
+              "\tsubstance_id bigint;" \
+              "\nbegin\n\n"
 
         sql += self.get_or_create_substance_id()
-        sql += self.get_state_id()
 
-        sql += "END $$\nLANGUAGE plpgsql;"
+        sql += "\nEND $$\nLANGUAGE plpgsql;"
         script_file = open('script.sql', mode='w')
         script_file.write(sql)
 
