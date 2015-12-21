@@ -86,6 +86,7 @@ class SqlTransformer:
         print(self.common_data)
         print(self.table_quantities)
         print(self.table_dimensions)
+        print(self.table[0])
 
         self.check_data()
 
