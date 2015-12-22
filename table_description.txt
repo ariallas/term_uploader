@@ -1,0 +1,15 @@
+?  chem_subst_quantities - отношение quantity-substance???
+a  chemical_substances - название, формула
+a  data_sets - описание файла + substances_in_state_id
+a  data_sources - название
+v  dimensions - название
+a  measurments_uncertenties - значение, points_of_measure_id, uncertanty_type_id
+v  physical_quantities - название, quantity_role_id
+v  physical_quantities_dimensions - отношение quantity-dimension
+v  physical_quantities_states - отношение state-quantity
+v  physical_quantities_roles - роль(аргумент/константа)
+a  points_of_measure - 
+	значение, количество рядов, data_set_id, data_source_id, dimension_id, physical_quantity_id
+v  states - название
+a  substances_in_states - отношение substance-state
+v  uncertanty_types - название

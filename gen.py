@@ -71,14 +71,12 @@ class SqlTransformer:
         if 'name' not in self.common_data and 'formula' not in self.common_data:
             raise Exception("No substance name or formula found")
 
-    def get_or_create_substance_id(self):
-        return "select id from ont.chemical_substances cs into substance_id " \
-               "where chemical_formula='{0}' or substance_name='{1}';\n" \
-               "if substance_id is NULL then\n" \
-               "\tinsert into ont.chemical_substances values (nextval('chemical_substances_id_seq'), '{0}', '{1}');\n" \
-               "end if;\n".format(
-                self.common_data['name'],
-                self.common_data['formula'])
+    @staticmethod
+    def get_or_create(table, variable, condition, values):
+        return "select id into {1} from ont.{0} where {2};\n" \
+               "if {1} is NULL then\n" \
+               "\tinsert into ont.{0} values ({3}) returning id into {1};\n" \
+               "end if;\n\n".format(table, variable, condition, values)
 
     def generate_sql(self):
         xls_reader = XlsReader()
@@ -91,10 +89,30 @@ class SqlTransformer:
         self.check_data()
 
         sql = "DO $$\n\ndeclare\n" \
-              "\tsubstance_id bigint;" \
-              "\nbegin\n\n"
+              "\tchemical_substance_id bigint;\n" \
+              "\tsubstance_in_state_id bigint;\n" \
+              "\tdata_source_id        bigint;\n\n" \
+              "begin\n\n"
 
-        sql += self.get_or_create_substance_id()
+        sql += self.get_or_create(
+            "chemical_substances",
+            "chemical_substance_id",
+            "chemical_formula = '{1}' or substance_name = '{0}'".format(self.common_data['name'],
+                                                                        self.common_data['formula']),
+            "nextval('chemical_substances_id_seq'), '{1}', '{0}'".format(self.common_data['name'],
+                                                                         self.common_data['formula']))
+        sql += self.get_or_create(
+            "substances_in_states",
+            "substance_in_state_id",
+            "substance_id = chemical_substance_id",
+            "nextval('substances_in_states_id_seq'), 'asdasd', 'asdasd', FALSE, chemical_substance_id,"
+            "(select id from ont.states where lower(state_name) = '{0}')".format(self.common_data['state']))
+
+        sql += self.get_or_create(
+            "data_sources",
+            "data_source_id",
+            "data_source_name = '{0}'".format(self.common_data['source']),
+            "nextval('data_sources_id_seq'), '{0}'".format(self.common_data['source']))
 
         sql += "\nEND $$\nLANGUAGE plpgsql;"
         script_file = open('script.sql', mode='w')
