@@ -1,5 +1,7 @@
 import openpyxl
 import re
+import datetime
+import glob
 
 
 def comp_str(s1, s2):
@@ -16,14 +18,22 @@ class XlsReader:
 
     def correct_data(self):
         if 'precision' in self.common_data:
-            self.common_data['precision'] = re.sub("class\s", "", self.common_data['precision'])
+            if 'class' in self.common_data['precision']:
+                self.common_data['precision'] = re.sub("class\s", "", self.common_data['precision'])
+                self.common_data['uncertainty_name'] = 'Precision class'
         if 'state' in self.common_data:
             self.common_data['state'] = self.common_data['state'].lower()
+        if 'description' not in self.common_data:
+            self.common_data['description'] = 'there are no information'
+        for i in range(len(self.table_dimensions)):
+            if '/' in self.table_dimensions[i]:
+                self.table_dimensions[i] = re.sub('\*', '/', self.table_dimensions[i])
 
-    def read_table(self):
+    def read_table(self, file_name):
         table_row = None
+        readable_rows = []
 
-        wb = openpyxl.load_workbook('1_mod.xlsx')
+        wb = openpyxl.load_workbook(file_name)
         self.sheet = wb.get_sheet_by_name(wb.get_sheet_names()[0])
         max_row = self.sheet.max_row
         rows = self.sheet.rows
@@ -39,12 +49,16 @@ class XlsReader:
                     j += 1
 
         for i in range(len(rows[table_row])):
-            if rows[table_row][i] is not None:
+            if rows[table_row][i].value is not None and rows[table_row][i].value \
+                    in ["T", "P", "Pmelt", "Vliquid", "Vsolid", "Ttr", "Ptr", "Tc", "Pc", "B", "Cp", "Ttrans",
+                        "DHtrans", "DHF(0)", "I", "Z"]:
+                readable_rows.append(i)
                 self.table_quantities.append(rows[table_row][i].value)
-            if rows[table_row + 1][i] is not None:
-                self.table_dimensions.append(rows[table_row + 1][i].value)
-            else:
-                self.table_dimensions.append(None)
+                if rows[table_row + 1][i].value is not None:
+                    self.table_dimensions.append(rows[table_row + 1][i].value)
+                else:
+                    self.table_dimensions.append(None)
+
         for i in range(table_row + 2, max_row):
             if rows[i][0].value is None and rows[i - 1][0].value is None:
                 break
@@ -52,9 +66,8 @@ class XlsReader:
                 continue
             row = rows[i]
             read_row = []
-            for val in row:
-                if val.value is not None:
-                    read_row.append(val.value)
+            for j in readable_rows:
+                    read_row.append(row[j].value)
             self.table.append(read_row)
 
         self.correct_data()
@@ -69,8 +82,9 @@ class SqlTransformer:
         self.table_dimensions = []
 
     def check_data(self):
-        if 'name' not in self.common_data and 'formula' not in self.common_data:
-            raise Exception("No substance name or formula found")
+        for i in ['name', 'formula', 'state', 'description', 'uncertainty_name']:
+            if i not in self.common_data:
+                raise Exception("No {0} found in the document".format(i))
 
     @staticmethod
     def get_or_create(table, variable, condition, values):
@@ -110,25 +124,25 @@ class SqlTransformer:
                         self.common_data['precision'])
         return sql[:-1]
 
-    def insert_rows(self):
+    def insert_rows(self, file_name):
         return "with\n" \
                "state as (select id from ont.states where lower(state_name) = '{0}'),\n" \
                "data_set as (insert into ont.data_sets " \
-               "values(nextval('data_sets_id_seq'), '{1}', '{2}', '{3}', substance_in_state_id) returning id),\n" \
+               "values(nextval('data_sets_id_seq'), '{1}', '{2}', '{3}', substance_in_state_id) returning id)\n" \
                "insert into ont.points_of_measure values {4};\n\n" \
                "with uncertainty_type as (select id from ont.uncertainty_types where uncertainty_name = '{5}')\n" \
                "insert into ont.measurement_uncertainties values {6};\n\n".format(
                 self.common_data['state'],
-                'file_name',
-                'file type (there are no information)',
-                'string-date',
+                file_name,
+                self.common_data['description'],
+                re.sub('-', '', str(datetime.date.today())),
                 self.measure_values(),
-                'uncertainty_name',
+                self.common_data['uncertainty_name'],
                 self.uncertainty_values())
 
-    def generate_sql(self):
+    def generate_sql(self, file_name):
         xls_reader = XlsReader()
-        self.common_data, self.table, self.table_quantities, self.table_dimensions = xls_reader.read_table()
+        self.common_data, self.table, self.table_quantities, self.table_dimensions = xls_reader.read_table(file_name)
         print(self.common_data)
         print(self.table_quantities)
         print(self.table_dimensions)
@@ -153,7 +167,11 @@ class SqlTransformer:
             "substances_in_states",
             "substance_in_state_id",
             "substance_id = chemical_substance_id",
-            "nextval('substances_in_states_id_seq'), 'asdasd', 'asdasd', FALSE, chemical_substance_id,"
+            "nextval('substances_in_states_id_seq'),"
+            "'id' || chemical_substance_id || '_' || (select id from ont.states where lower(state_name)='{0}') || '_c',"
+            "'id' || chemical_substance_id || '_' || (select id from ont.states where lower(state_name)='{0}') || '_f',"
+            "FALSE,"
+            "chemical_substance_id,"
             "(select id from ont.states where lower(state_name) = '{0}')".format(self.common_data['state']))
 
         sql += self.get_or_create(
@@ -164,14 +182,18 @@ class SqlTransformer:
 
         sql += "drop sequence if exists points_of_measure_id_seq_copy;\n" \
                "create temp sequence points_of_measure_id_seq_copy;\n" \
-               "select setval('points_of_measure_id_seq_copy', currval('points_of_measure_id_seq'));\n\n"
+               "perform setval('points_of_measure_id_seq_copy', currval('points_of_measure_id_seq'));\n\n"
 
-        sql += self.insert_rows()
+        sql += self.insert_rows(file_name)
 
         sql += "\nEND $$\nLANGUAGE plpgsql;"
 
-        script_file = open('script.sql', mode='w')
+        script_file = open(re.sub('\.xls.*', '.sql', file_name), mode='w')
         script_file.write(sql)
+        script_file.close()
 
 st = SqlTransformer()
-st.generate_sql()
+for file in glob.glob('./*.xls*'):
+    file = file[2:]
+    if file[0] != '~':
+        st.generate_sql(file)
