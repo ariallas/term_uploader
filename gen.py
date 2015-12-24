@@ -2,6 +2,7 @@ import openpyxl
 import re
 import datetime
 import glob
+import psycopg2
 
 
 def comp_str(s1, s2):
@@ -192,8 +193,12 @@ class SqlTransformer:
         script_file.write(sql)
         script_file.close()
 
-st = SqlTransformer()
-for file in glob.glob('./*.xls*'):
-    file = file[2:]
-    if file[0] != '~':
-        st.generate_sql(file)
+connection_file = open('ConnectionString.txt', mode='r')
+connection = psycopg2.connect(connection_file.read())
+connection_file.close()
+
+# st = SqlTransformer()
+# for file in glob.glob('./*.xls*'):
+#     file = file[2:]
+#     if file[0] != '~':
+#         st.generate_sql(file)
