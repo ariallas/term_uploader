@@ -269,6 +269,8 @@ class SqlTransformer:
                 self.common_data['formula'],
                 self.common_data['name'])
             substance_id = "currval('chemical_substances_id_seq')"
+        else:
+            substance_id = substance_id[0]
 
         # Getting data source
         cursor.execute("select id from ont.data_sources where data_source_name = '{0}'".format(
@@ -306,6 +308,10 @@ class SqlTransformer:
             substance_in_state_id
         )
         dataset_id = "currval('data_sets_id_seq')"
+
+        sql += "\ndrop sequence if exists points_of_measure_id_seq_copy;\n" \
+               "create temp sequence points_of_measure_id_seq_copy;\n" \
+               "perform setval('points_of_measure_id_seq_copy', currval('points_of_measure_id_seq'));\n"
 
         # Inserting points of measure
         for i in range(len(self.table_quantities)):
@@ -349,6 +355,19 @@ class SqlTransformer:
                     quantity_id
                 )
             sql = sql[:-1] + ';\n'
+
+        sql += "\n-- Uncertainties\n"
+        cursor.execute("select id from ont.uncertainty_types where uncertainty_name = '{0}'".format(
+            self.common_data['uncertainty_name']))
+        uncertainty_type_id = cursor.fetchone()[0]
+        sql += "insert into ont.measurement_uncertainties values"
+        for i in range(len(self.table_dimensions)):
+            for j in range(len(self.table)):
+                sql += "\n\t(nextval('measurement_uncertainties_id_seq'), {0}, " \
+                       "nextval('points_of_measure_id_seq_copy'), {1}),".format(
+                    self.common_data['precision'],
+                    uncertainty_type_id)
+        sql = sql[:-1] + ';\n'
 
         sql += "\ncommit;"
 
