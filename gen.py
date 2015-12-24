@@ -13,22 +13,65 @@ class XlsReader:
     def __init__(self):
         self.sheet = None
         self.common_data = dict()
+
         self.table = []
         self.table_quantities = []
         self.table_dimensions = []
+        self.table_types = []
+        self.table_roles = []
 
-    def correct_data(self):
+        self.functions = []
+        self.arguments = []
+        self.constants = []
+        self.substance_constants = []
+
+    def extend_argument(self, argument):
+        if argument.lower() + ' =' in self.common_data:
+            argument_str = self.common_data[argument.lower() + ' =']
+            value = re.findall('([0-9]+(\.[0-9]+)*)', argument_str)[0][0]
+            argument_str = re.sub(value, '', argument_str)
+            dimension = argument_str.strip()
+
+            self.table_quantities.append(argument)
+            self.table_dimensions.append(dimension)
+            for i in range(len(self.table)):
+                self.table[i].append(value)
+
+            return True
+        else:
+            return False
+
+    def extend_data(self):
         if 'precision' in self.common_data:
             if 'class' in self.common_data['precision']:
                 self.common_data['precision'] = re.sub("class\s", "", self.common_data['precision'])
                 self.common_data['uncertainty_name'] = 'Precision class'
-        if 'state' in self.common_data:
-            self.common_data['state'] = self.common_data['state'].lower()
         if 'description' not in self.common_data:
             self.common_data['description'] = 'there are no information'
-        for i in range(len(self.table_dimensions)):
-            if '/' in self.table_dimensions[i]:
-                self.table_dimensions[i] = re.sub('\*', '/', self.table_dimensions[i])
+        if 'functions' in self.common_data:
+            self.functions = [x.strip() for x in self.common_data['functions'].split(',')]
+        if 'arguments' in self.common_data:
+            self.arguments = [x.strip() for x in self.common_data['arguments'].split(',')]
+        if 'constants' in self.common_data:
+            self.constants = [x.strip() for x in self.common_data['constants'].split(',')]
+
+        for function in self.functions:
+            if function not in self.table_quantities:
+                raise Exception("Function {0} not found in table".format(function))
+        for argument in self.arguments:
+            if argument not in self.table_quantities:
+                if not self.extend_argument(argument):
+                    raise Exception("Argument {0} not found in table or data".format(argument))
+
+        for quantity in self.table_quantities:
+            if quantity in self.functions:
+                self.table_roles.append('func')
+            elif quantity in self.arguments:
+                self.table_roles.append('arg')
+            elif quantity in self.constants:
+                self.table_roles.append('cnst')
+            else:
+                raise Exception("Quantity {0} not found in functions/arguments/constants".format(quantity))
 
     def read_table(self, file_name):
         table_row = None
@@ -46,13 +89,11 @@ class XlsReader:
                 break
             for j in range(len(row) - 1):
                 if row[j].value is not None and row[j + 1].value is not None:
-                    self.common_data[re.findall("\w+", row[j].value.lower())[0]] = row[j + 1].value
+                    self.common_data[row[j].value.lower()] = row[j + 1].value
                     j += 1
 
         for i in range(len(rows[table_row])):
-            if rows[table_row][i].value is not None and rows[table_row][i].value \
-                    in ["T", "P", "Pmelt", "Vliquid", "Vsolid", "Ttr", "Ptr", "Tc", "Pc", "B", "Cp", "Ttrans",
-                        "DHtrans", "DHF(0)", "I", "Z"]:
+            if rows[table_row][i].value is not None:
                 readable_rows.append(i)
                 self.table_quantities.append(rows[table_row][i].value)
                 if rows[table_row + 1][i].value is not None:
@@ -71,7 +112,7 @@ class XlsReader:
                     read_row.append(row[j].value)
             self.table.append(read_row)
 
-        self.correct_data()
+        self.extend_data()
         return self.common_data, self.table, self.table_quantities, self.table_dimensions
 
 
@@ -141,9 +182,10 @@ class SqlTransformer:
                 self.common_data['uncertainty_name'],
                 self.uncertainty_values())
 
-    def generate_sql(self, file_name):
+    def generate_sql(self, file_name, cursor):
         xls_reader = XlsReader()
-        self.common_data, self.table, self.table_quantities, self.table_dimensions = xls_reader.read_table(file_name)
+        self.common_data, self.table, \
+        self.table_quantities, self.table_dimensions = xls_reader.read_table(file_name)
         print(self.common_data)
         print(self.table_quantities)
         print(self.table_dimensions)
@@ -195,10 +237,10 @@ class SqlTransformer:
 
 connection_file = open('ConnectionString.txt', mode='r')
 connection = psycopg2.connect(connection_file.read())
-connection_file.close()
+cursor = connection.cursor()
 
-# st = SqlTransformer()
-# for file in glob.glob('./*.xls*'):
-#     file = file[2:]
-#     if file[0] != '~':
-#         st.generate_sql(file)
+st = SqlTransformer()
+for file in glob.glob('./*.xls*'):
+    file = file[2:]
+    if file[0] != '~':
+        st.generate_sql(file, cursor)
