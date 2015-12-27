@@ -171,7 +171,7 @@ class SqlTransformer:
         self.sql += "insert into ont.{0} values (nextval('{1}'), {2});\n".format(table, sequence, values)
         return "currval('{0}')".format(sequence)
 
-    def insert_points_of_measure(self, state_id, source_id, dataset_id):
+    def insert_points_of_measure(self, state_id, source_ids, dataset_id):
         for i in range(len(self.table_quantities)):
             quantity = self.table_quantities[i]
             dimension = self.table_dimensions[i]
@@ -199,7 +199,7 @@ class SqlTransformer:
             for j in range(len(self.table)):
                 measure = self.table[j][i]
                 self.sql += "\n\t(nextval('points_of_measure_id_seq'), {0}, {1}, {2}, {3}, {4}, {5}),".format(
-                    measure, j, dataset_id, source_id, dimension_id, quantity_id)
+                    measure, j, dataset_id, source_ids[j], dimension_id, quantity_id)
             self.sql = self.sql[:-1] + ';\n'
 
     def insert_uncertainties(self):
@@ -250,10 +250,24 @@ class SqlTransformer:
                                                  self.common_data['formula'], self.common_data['name']))
 
         # Getting data source
-        source_id = self.get_or_create_id("data_sources",
-                                          "data_source_name = '{0}'".format(self.common_data['source']),
-                                          "data_sources_id_seq",
-                                          "'{0}'".format(self.common_data['source']))
+        source_ids = []
+
+        seen = set()
+        unique_sources = [x for x in self.sources if not (x in seen or seen.add(x))]
+
+        unique_source_ids = []
+        inserted_sources = 0
+        for source in unique_sources:
+            source_id = self.get_or_create_id("data_sources",
+                                              "data_source_name = '{0}'".format(self.common_data['source']),
+                                              "data_sources_id_seq",
+                                              "'{0}'".format(source))
+            if source_id == "currval('data_sources_id_seq')":
+                source_id = source_id + " - " + str(inserted_sources)
+                inserted_sources += 1
+            unique_source_ids.append(source_id)
+        for source in self.sources:
+            source_ids.append(unique_source_ids[unique_sources.index(source)])
 
         # Getting substances_in_state
         if substance_id != "currval('chemical_substances_id_seq')":
@@ -279,7 +293,7 @@ class SqlTransformer:
                     "create temp sequence points_of_measure_id_seq_copy;\n" \
                     "select setval('points_of_measure_id_seq_copy', currval('points_of_measure_id_seq'));\n"
 
-        self.insert_points_of_measure(state_id, source_id, dataset_id)
+        self.insert_points_of_measure(state_id, source_ids, dataset_id)
         self.insert_uncertainties()
 
         self.sql += "\ncommit;"
