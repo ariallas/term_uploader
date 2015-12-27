@@ -17,8 +17,11 @@ class XlsReader:
         self.table = []
         self.table_quantities = []
         self.table_dimensions = []
-        self.table_types = []
         self.table_roles = []
+
+        self.sources = []
+        self.uncertainties = []
+        self.uncertainties_values = []
 
         self.functions = []
         self.arguments = []
@@ -73,6 +76,18 @@ class XlsReader:
             else:
                 raise Exception("Quantity {0} not found in functions/arguments/constants".format(quantity))
 
+        self.uncertainties.append(self.common_data['uncertainty_name'])
+
+        for i in range(len(self.table)):
+            self.uncertainties_values.append([])
+            if 'source' in self.common_data:
+                self.sources.append(self.common_data['source'])
+            for j in range(len(self.table_quantities)):
+                self.uncertainties_values[i].append([])
+                if 'uncertainty_name' in self.common_data:
+                    self.uncertainties_values[i][j].append(self.common_data['precision'])
+        print(self.uncertainties_values)
+
     def read_table(self, file_name):
         table_row = None
         readable_rows = []
@@ -113,7 +128,8 @@ class XlsReader:
             self.table.append(read_row)
 
         self.extend_data()
-        return self.common_data, self.table, self.table_quantities, self.table_dimensions, self.table_roles
+        return self.common_data, self.table, self.table_quantities, self.table_dimensions, self.table_roles, \
+            self.sources, self.uncertainties, self.uncertainties_values
 
 
 class SqlTransformer:
@@ -123,6 +139,9 @@ class SqlTransformer:
         self.table_quantities = []
         self.table_dimensions = []
         self.table_roles = []
+        self.sources = []
+        self.uncertainties = []
+        self.uncertainties_values = []
         self.cursor = None
         self.sql = ""
 
@@ -166,7 +185,7 @@ class SqlTransformer:
             dimension_id = self.get_id("dimensions", "dimension_name = '{0}'".format(dimension))
 
             quantity_id = self.get_or_create_id(
-                "physical_quantities", "quantity_designation = '{0}'".format(quantity),
+                "physical_quantities", "lower(quantity_designation) = '{0}'".format(quantity),
                 "physical_quantities_id_seq",
                 "'{0}', '{0}', {1}".format(quantity, role_id))
             if quantity_id == "currval('physical_quantities_id_seq')":
@@ -186,21 +205,29 @@ class SqlTransformer:
     def insert_uncertainties(self):
         self.sql += "\n-- Uncertainties\n"
 
-        uncertainty_type_id = self.get_id("uncertainty_types", "uncertainty_name = '{0}'".format(
-            self.common_data['uncertainty_name']))
+        uncertainty_type_ids = []
+        for uncertainty in self.uncertainties:
+            uncertainty_type_ids.append(self.get_id("uncertainty_types", "uncertainty_name = '{0}'".format(
+                uncertainty)))
 
         self.sql += "insert into ont.measurement_uncertainties values"
         for i in range(len(self.table_dimensions)):
             for j in range(len(self.table)):
-                self.sql += "\n\t(nextval('measurement_uncertainties_id_seq'), {0}, " \
-                            "nextval('points_of_measure_id_seq_copy'), {1}),".format(
-                                self.common_data['precision'], uncertainty_type_id)
+                for k in range(len(uncertainty_type_ids)):
+                    if k == 0:
+                        self.sql += "\n\t(nextval('measurement_uncertainties_id_seq'), {0}, " \
+                                    "nextval('points_of_measure_id_seq_copy'), {1}),".format(
+                                        self.uncertainties_values[j][i][k], uncertainty_type_ids[k])
+                    else:
+                        self.sql += "\n\t(currval('measurement_uncertainties_id_seq'), {0}, " \
+                                    "nextval('points_of_measure_id_seq_copy'), {1}),".format(
+                                        self.uncertainties_values[j][i][k], uncertainty_type_ids[k])
         self.sql = self.sql[:-1] + ';\n'
 
     def generate_sql(self, file_name, cursor):
         xls_reader = XlsReader()
-        self.common_data, self.table, \
-            self.table_quantities, self.table_dimensions, self.table_roles = xls_reader.read_table(file_name)
+        self.common_data, self.table, self.table_quantities, self.table_dimensions, self.table_roles, \
+            self.sources, self.uncertainties, self.uncertainties_values = xls_reader.read_table(file_name)
         self.cursor = cursor
         print(self.common_data)
         print(self.table_quantities)
