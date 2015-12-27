@@ -123,16 +123,85 @@ class SqlTransformer:
         self.table_quantities = []
         self.table_dimensions = []
         self.table_roles = []
+        self.cursor = None
+        self.sql = ""
 
     def check_data(self):
         for i in ['name', 'formula', 'state', 'description', 'uncertainty_name']:
             if i not in self.common_data:
                 raise Exception("No {0} found in the document".format(i))
 
+    def get_id(self, table, condition):
+        self.cursor.execute("select id from ont.{0} where {1}".format(table, condition))
+        found_id = self.cursor.fetchone()
+        if found_id is None:
+            raise Exception("Id where '{0}' not found in table '{1}'".format(condition, table))
+        else:
+            return found_id[0]
+
+    def get_or_create_id(self, table, condition, sequence, values):
+        self.cursor.execute("select id from ont.{0} where {1}".format(table, condition))
+        found_id = self.cursor.fetchone()
+        if found_id is None:
+            self.sql += "insert into ont.{0} values (nextval('{1}'), {2});\n".format(table, sequence, values)
+            return "currval('{0}')".format(sequence)
+        else:
+            return found_id[0]
+
+    def create_id(self, table, sequence, values):
+        self.sql += "insert into ont.{0} values (nextval('{1}'), {2});\n".format(table, sequence, values)
+        return "currval('{0}')".format(sequence)
+
+    def insert_points_of_measure(self, state_id, source_id, dataset_id):
+        for i in range(len(self.table_quantities)):
+            quantity = self.table_quantities[i]
+            dimension = self.table_dimensions[i]
+            role = self.table_roles[i]
+
+            self.sql += "\n-- {0} column\n".format(quantity)
+
+            role_id = self.get_id("physical_quantity_roles", "role_type = '{0}'".format(role))
+
+            dimension = re.sub('\*', '/', dimension)
+            dimension_id = self.get_id("dimensions", "dimension_name = '{0}'".format(dimension))
+
+            quantity_id = self.get_or_create_id(
+                "physical_quantities", "quantity_designation = '{0}'".format(quantity),
+                "physical_quantities_id_seq",
+                "'{0}', '{0}', {1}".format(quantity, role_id))
+            if quantity_id == "currval('physical_quantities_id_seq')":
+                self.sql += "insert into ont.physical_quantities_states values " \
+                            "({0}, currval('physical_quantities_id_seq'));\n".format(state_id)
+                self.sql += "insert into ont.physical_quantities_dimensions values " \
+                            "(currval('physical_quantities_id_seq'), {0});\n".format(dimension_id)
+
+            self.sql += "insert into ont.points_of_measure values"
+
+            for j in range(len(self.table)):
+                measure = self.table[j][i]
+                self.sql += "\n\t(nextval('points_of_measure_id_seq'), {0}, {1}, {2}, {3}, {4}, {5}),".format(
+                    measure, j, dataset_id, source_id, dimension_id, quantity_id)
+            self.sql = self.sql[:-1] + ';\n'
+
+    def insert_uncertainties(self):
+        self.sql += "\n-- Uncertainties\n"
+
+        uncertainty_type_id = self.get_id("uncertainty_types", "uncertainty_name = '{0}'".format(
+            self.common_data['uncertainty_name']))
+
+        self.sql += "insert into ont.measurement_uncertainties values"
+        for i in range(len(self.table_dimensions)):
+            for j in range(len(self.table)):
+                self.sql += "\n\t(nextval('measurement_uncertainties_id_seq'), {0}, " \
+                            "nextval('points_of_measure_id_seq_copy'), {1}),".format(
+                                self.common_data['precision'], uncertainty_type_id)
+        self.sql = self.sql[:-1] + ';\n'
+
     def generate_sql(self, file_name, cursor):
         xls_reader = XlsReader()
         self.common_data, self.table, \
             self.table_quantities, self.table_dimensions, self.table_roles = xls_reader.read_table(file_name)
+        self.cursor = cursor
         print(self.common_data)
         print(self.table_quantities)
         print(self.table_dimensions)
@@ -140,132 +209,56 @@ class SqlTransformer:
 
         self.check_data()
 
-        sql = "begin;\n\n"
+        self.sql = "begin;\n\n"
 
         # Getting state
-        cursor.execute("select id from ont.states where lower(state_name) = '{0}'".format(self.common_data['state']))
-        state_id = cursor.fetchone()
-        if state_id is None:
-            raise Exception("State {0} not found in database".format(self.common_data['state']))
-        else:
-            state_id = state_id[0]
+        state_id = self.get_id("states", "lower(state_name) = '{0}'".format(self.common_data['state']))
 
         # Getting chemical substance
-        cursor.execute("select id from ont.chemical_substances "
-                       "where chemical_formula = '{0}' or substance_name = '{1}'".format(
-                        self.common_data['formula'],
-                        self.common_data['name']))
-        substance_id = cursor.fetchone()
-        if substance_id is None:
-            sql += "insert into ont.chemical_substances values " \
-                   "(nextval('chemical_substances_id_seq'), '{0}', '{1}');\n".format(
-                    self.common_data['formula'],
-                    self.common_data['name'])
-            substance_id = "currval('chemical_substances_id_seq')"
-        else:
-            substance_id = substance_id[0]
+        substance_id = self.get_or_create_id("chemical_substances",
+                                             "chemical_formula = '{0}' or substance_name = '{1}'".format(
+                                                 self.common_data['formula'], self.common_data['name']),
+                                             "chemical_substances_id_seq",
+                                             "'{0}', '{1}'".format(
+                                                 self.common_data['formula'], self.common_data['name']))
 
         # Getting data source
-        cursor.execute("select id from ont.data_sources where data_source_name = '{0}'".format(
-            self.common_data['source']))
-        source_id = cursor.fetchone()
-        if source_id is None:
-            sql += "insert into ont.data_sources values " \
-                   "(nextval('data_sources_id_seq'), '{0}');\n".format(
-                    self.common_data['source'])
-            source_id = "currval('data_sources_id_seq')"
-        else:
-            source_id = source_id[0]
+        source_id = self.get_or_create_id("data_sources",
+                                          "data_source_name = '{0}'".format(self.common_data['source']),
+                                          "data_sources_id_seq",
+                                          "'{0}'".format(self.common_data['source']))
 
         # Getting substances_in_state
-        substance_in_state_id = None
         if substance_id != "currval('chemical_substances_id_seq')":
-            cursor.execute("select id from ont.substances_in_states where substance_id = {0} and state_id = {1}".format(
-                substance_id,
-                state_id))
-            substance_in_state_id = cursor.fetchone()
-        if substance_in_state_id is None:
-            sql += "insert into ont.substances_in_states values (nextval('substances_in_states_id_seq'), " \
-                   "'id' || {0} || '_' || {1} || '_c','id' || {0} || '_' || {1} || '_f', FALSE, {0} , {1});\n".format(
-                    substance_id,
-                    state_id)
-            substance_in_state_id = "currval('substances_in_states_id_seq')"
+            substance_in_state_id = self.get_or_create_id(
+                "substances_in_states",
+                "substance_id = {0} and state_id = {1}".format(substance_id, state_id),
+                "substances_in_states_id_seq",
+                "'id' || {0} || '_' || {1} || '_c','id' || {0} || '_' || {1} || '_f', FALSE, {0} , {1}".format(
+                    substance_id, state_id))
         else:
-            substance_in_state_id = substance_in_state_id[0]
+            substance_in_state_id = self.create_id(
+                "substances_in_states", "substances_in_states_id_seq",
+                "'id' || {0} || '_' || {1} || '_c','id' || {0} || '_' || {1} || '_f', FALSE, {0} , {1}".format(
+                    substance_id, state_id))
 
         # Getting data set
-        sql += "insert into ont.data_sets values (nextval('data_sets_id_seq'), '{0}', '{1}', '{2}', {3});\n".format(
-            file_name,
-            self.common_data['description'],
-            re.sub('-', '', str(datetime.date.today())),
-            substance_in_state_id
-        )
-        dataset_id = "currval('data_sets_id_seq')"
+        dataset_id = self.create_id("data_sets", "data_sets_id_seq", "'{0}', '{1}', '{2}', {3}".format(
+            file_name, self.common_data['description'], re.sub('-', '', str(datetime.date.today())),
+            substance_in_state_id))
 
-        sql += "\ndrop sequence if exists points_of_measure_id_seq_copy;\n" \
-               "create temp sequence points_of_measure_id_seq_copy;\n" \
-               "perform setval('points_of_measure_id_seq_copy', currval('points_of_measure_id_seq'));\n"
+        # Creating temporary points of measure sequence copy
+        self.sql += "\ndrop sequence if exists points_of_measure_id_seq_copy;\n" \
+                    "create temp sequence points_of_measure_id_seq_copy;\n" \
+                    "select setval('points_of_measure_id_seq_copy', currval('points_of_measure_id_seq'));\n"
 
-        # Inserting points of measure
-        for i in range(len(self.table_quantities)):
-            quantity = self.table_quantities[i]
-            dimension = self.table_dimensions[i]
-            role = self.table_roles[i]
+        self.insert_points_of_measure(state_id, source_id, dataset_id)
+        self.insert_uncertainties()
 
-            sql += "\n-- {0} column\n".format(quantity)
-
-            cursor.execute("select id from ont.physical_quantity_roles where role_type = '{0}'".format(role))
-            role_id = cursor.fetchone()[0]
-
-            dimension = re.sub('\*', '/', dimension)
-            cursor.execute("select id from ont.dimensions where dimension_name = '{0}'".format(dimension))
-            dimension_id = cursor.fetchone()[0]
-
-            cursor.execute("select id from ont.physical_quantities where quantity_designation = '{0}'".format(
-                quantity))
-            quantity_id = cursor.fetchone()
-            if quantity_id is None:
-                sql += "insert into ont.physical_quantities values (nextval('physical_quantities_id_seq'), " \
-                       "'{0}', '{0}', {1});\n".format(quantity, role_id)
-                quantity_id = "currval('physical_quantities_id_seq')"
-                sql += "insert into ont.physical_quantities_states values " \
-                       "({0}, currval('physical_quantities_id_seq'));\n".format(state_id)
-                sql += "insert into ont.physical_quantities_dimensions values " \
-                       "(currval('physical_quantities_id_seq'), {0});\n".format(dimension_id)
-            else:
-                quantity_id = quantity_id[0]
-
-            sql += "insert into ont.points_of_measure values"
-
-            for j in range(len(self.table)):
-                measure = self.table[j][i]
-                sql += "\n\t(nextval('points_of_measure_id_seq'), {0}, {1}, {2}, {3}, {4}, {5}),".format(
-                    measure,
-                    j,
-                    dataset_id,
-                    source_id,
-                    dimension_id,
-                    quantity_id
-                )
-            sql = sql[:-1] + ';\n'
-
-        sql += "\n-- Uncertainties\n"
-        cursor.execute("select id from ont.uncertainty_types where uncertainty_name = '{0}'".format(
-            self.common_data['uncertainty_name']))
-        uncertainty_type_id = cursor.fetchone()[0]
-        sql += "insert into ont.measurement_uncertainties values"
-        for i in range(len(self.table_dimensions)):
-            for j in range(len(self.table)):
-                sql += "\n\t(nextval('measurement_uncertainties_id_seq'), {0}, " \
-                       "nextval('points_of_measure_id_seq_copy'), {1}),".format(
-                        self.common_data['precision'],
-                        uncertainty_type_id)
-        sql = sql[:-1] + ';\n'
-
-        sql += "\ncommit;"
+        self.sql += "\ncommit;"
 
         script_file = open(re.sub('\.xls.*', '.sql', file_name), mode='w')
-        script_file.write(sql)
+        script_file.write(self.sql)
         script_file.close()
 
 connection_file = open('ConnectionString.txt', mode='r')
