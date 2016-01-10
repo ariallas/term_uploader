@@ -18,65 +18,57 @@ class XlsReader:
         self.table_quantities = []
         self.table_dimensions = []
         self.table_roles = []
+        self.table_names = []
 
         self.sources = []
-        self.uncertainties = []
+        self.uncertainties_types = []
         self.uncertainties_values = []
 
         self.functions = []
         self.arguments = []
         self.constants = []
         self.substance_constants = []
-
-    def extend_argument(self, argument):
-        if argument.lower() + ' =' in self.common_data:
-            argument_str = self.common_data[argument.lower() + ' =']
-            value = re.findall('([0-9]+(\.[0-9]+)*)', argument_str)[0][0]
-            argument_str = re.sub(value, '', argument_str)
-            dimension = argument_str.strip()
-
-            self.table_quantities.append(argument)
-            self.table_dimensions.append(dimension)
-            for i in range(len(self.table)):
-                self.table[i].append(value)
-
-            return True
-        else:
-            return False
+        self.uncertainties = []
 
     def extend_data(self):
-        if 'precision' in self.common_data:
-            if 'class' in self.common_data['precision']:
-                self.common_data['precision'] = re.sub("class\s", "", self.common_data['precision'])
-                self.common_data['uncertainty_name'] = 'Precision class'
         if 'description' not in self.common_data:
             self.common_data['description'] = 'there are no information'
-        if 'functions' in self.common_data:
-            self.functions = [x.strip() for x in self.common_data['functions'].split(',')]
-        if 'arguments' in self.common_data:
-            self.arguments = [x.strip() for x in self.common_data['arguments'].split(',')]
-        if 'constants' in self.common_data:
-            self.constants = [x.strip() for x in self.common_data['constants'].split(',')]
 
         for function in self.functions:
-            if function not in self.table_quantities:
+            if function[0] not in self.table_quantities:
                 raise Exception("Function {0} not found in table".format(function))
+
         for argument in self.arguments:
-            if argument not in self.table_quantities:
-                if not self.extend_argument(argument):
-                    raise Exception("Argument {0} not found in table or data".format(argument))
+            if argument[0] not in self.table_quantities and argument[3] is None:
+                raise Exception("Argument {0} not found in table or data".format(argument))
+            elif argument[0] not in self.table_quantities:
+                self.table_quantities.append(argument[0])
+                for i in range(len(self.table)):
+                    self.table[i].append(argument[3])
 
         for quantity in self.table_quantities:
-            if quantity in self.functions:
+            functions_designations = [i[0] for i in self.functions]
+            arguments_designations = [i[0] for i in self.arguments]
+            constants_designations = [i[0] for i in self.constants]
+
+            if quantity in functions_designations:
+                function = [f for f in self.functions if f[0] == quantity][0]
                 self.table_roles.append('func')
-            elif quantity in self.arguments:
+                self.table_names.append(function[1])
+                self.table_dimensions.append(function[2])
+            elif quantity in arguments_designations:
+                argument = [a for a in self.arguments if a[0] == quantity][0]
                 self.table_roles.append('arg')
-            elif quantity in self.constants:
+                self.table_names.append(argument[1])
+                self.table_dimensions.append(argument[2])
+            elif quantity in constants_designations:
+                constant = [c for c in self.constants if c[0] == quantity][0]
                 self.table_roles.append('cnst')
             else:
                 raise Exception("Quantity {0} not found in functions/arguments/constants".format(quantity))
 
-        self.uncertainties.append(self.common_data['uncertainty_name'])
+        for uncertainty in self.uncertainties:
+            self.uncertainties_types.append(uncertainty[0])
 
         for i in range(len(self.table)):
             self.uncertainties_values.append([])
@@ -84,39 +76,33 @@ class XlsReader:
                 self.sources.append(self.common_data['source'])
             for j in range(len(self.table_quantities)):
                 self.uncertainties_values[i].append([])
-                if 'uncertainty_name' in self.common_data:
-                    self.uncertainties_values[i][j].append(self.common_data['precision'])
-        print(self.uncertainties_values)
+                for uncertainty in self.uncertainties:
+                    self.uncertainties_values[i][j].append(uncertainty[1])
 
-    def read_table(self, file_name):
-        table_row = None
-        readable_rows = []
+    @staticmethod
+    def find_next_section(rows, max_row, index):
+        for i in range(index, max_row):
+            if rows[i][0].value is not None and rows[i][0].value.lower() in [
+                    'functions', 'arguments', 'constants', 'table', 'uncertainties']:
+                return i
+        return max_row
 
-        wb = openpyxl.load_workbook(file_name)
-        self.sheet = wb.get_sheet_by_name(wb.get_sheet_names()[0])
-        max_row = self.sheet.max_row
-        rows = self.sheet.rows
-
-        for i in range(len(self.sheet.rows)):
+    def parse_common_data(self, rows):
+        for i in range(len(rows)):
             row = rows[i]
-            if row[0].value is not None and comp_str(row[0].value, 'table'):
-                table_row = i + 1
-                break
             for j in range(len(row) - 1):
                 if row[j].value is not None and row[j + 1].value is not None:
                     self.common_data[row[j].value.lower()] = row[j + 1].value
                     j += 1
 
-        for i in range(len(rows[table_row])):
-            if rows[table_row][i].value is not None:
+    def parse_table(self, rows):
+        readable_rows = []
+        for i in range(len(rows[0])):
+            if rows[0][i].value is not None:
                 readable_rows.append(i)
-                self.table_quantities.append(rows[table_row][i].value)
-                if rows[table_row + 1][i].value is not None:
-                    self.table_dimensions.append(rows[table_row + 1][i].value)
-                else:
-                    self.table_dimensions.append(None)
+                self.table_quantities.append(rows[0][i].value)
 
-        for i in range(table_row + 2, max_row):
+        for i in range(1, len(rows)):
             if rows[i][0].value is None and rows[i - 1][0].value is None:
                 break
             if rows[i][0].value is None:
@@ -127,9 +113,52 @@ class XlsReader:
                     read_row.append(row[j].value)
             self.table.append(read_row)
 
+    def parse_functions(self, rows):
+        for row in rows:
+            if row[0].value is not None:
+                self.functions.append((row[0].value, row[1].value, row[2].value))
+
+    def parse_arguments(self, rows):
+        for row in rows:
+            if row[0].value is not None:
+                self.arguments.append((row[0].value, row[1].value, row[2].value, row[3].value))
+
+    def parse_uncertainties(self, rows):
+        for row in rows:
+            if row[0].value is not None:
+                self.uncertainties.append((row[0].value, row[1].value, row[2].value))
+
+    def read_table(self, file_name):
+        wb = openpyxl.load_workbook(file_name)
+        self.sheet = wb.get_sheet_by_name(wb.get_sheet_names()[0])
+        max_row = self.sheet.max_row
+        rows = self.sheet.rows
+
+        current_section = 0
+        next_section = self.find_next_section(rows, max_row, current_section + 1)
+        section_name = ""
+
+        while current_section < max_row:
+            if current_section != 0:
+                section_name = rows[current_section - 1][0].value.lower()
+
+            if current_section == 0:
+                self.parse_common_data(rows[current_section:next_section])
+            elif section_name == 'functions':
+                self.parse_functions(rows[current_section:next_section])
+            elif section_name == 'arguments':
+                self.parse_arguments(rows[current_section:next_section])
+            elif section_name == 'table':
+                self.parse_table(rows[current_section:next_section])
+            elif section_name == 'uncertainties':
+                self.parse_uncertainties(rows[current_section:next_section])
+
+            current_section = next_section + 1
+            next_section = self.find_next_section(rows, max_row, current_section)
+
         self.extend_data()
         return self.common_data, self.table, self.table_quantities, self.table_dimensions, self.table_roles, \
-            self.sources, self.uncertainties, self.uncertainties_values
+            self.sources, self.uncertainties_types, self.uncertainties_values, self.table_names
 
 
 class SqlTransformer:
@@ -139,6 +168,7 @@ class SqlTransformer:
         self.table_quantities = []
         self.table_dimensions = []
         self.table_roles = []
+        self.table_names = []
         self.sources = []
         self.uncertainties = []
         self.uncertainties_values = []
@@ -146,7 +176,7 @@ class SqlTransformer:
         self.sql = ""
 
     def check_data(self):
-        for i in ['name', 'formula', 'state', 'description', 'uncertainty_name']:
+        for i in ['name', 'formula', 'state', 'description']:
             if i not in self.common_data:
                 raise Exception("No {0} found in the document".format(i))
 
@@ -176,18 +206,18 @@ class SqlTransformer:
             quantity = self.table_quantities[i]
             dimension = self.table_dimensions[i]
             role = self.table_roles[i]
+            name = self.table_names[i]
 
             self.sql += "\n-- {0} column\n".format(quantity)
 
             role_id = self.get_id("physical_quantity_roles", "role_type = '{0}'".format(role))
 
-            dimension = re.sub('\*', '/', dimension)
             dimension_id = self.get_id("dimensions", "dimension_name = '{0}'".format(dimension))
 
             quantity_id = self.get_or_create_id(
-                "physical_quantities", "lower(quantity_designation) = '{0}'".format(quantity),
+                "physical_quantities", "lower(quantity_designation) = '{0}'".format(quantity.lower()),
                 "physical_quantities_id_seq",
-                "'{0}', '{0}', {1}".format(quantity, role_id))
+                "'{0}', '{1}', {2}".format(quantity, name, role_id))
             if quantity_id == "currval('physical_quantities_id_seq')":
                 self.sql += "insert into ont.physical_quantities_states values " \
                             "({0}, currval('physical_quantities_id_seq'));\n".format(state_id)
@@ -227,7 +257,8 @@ class SqlTransformer:
     def generate_sql(self, file_name, cursor):
         xls_reader = XlsReader()
         self.common_data, self.table, self.table_quantities, self.table_dimensions, self.table_roles, \
-            self.sources, self.uncertainties, self.uncertainties_values = xls_reader.read_table(file_name)
+            self.sources, self.uncertainties, self.uncertainties_values, self.table_names \
+            = xls_reader.read_table(file_name)
         self.cursor = cursor
         print(self.common_data)
         print(self.table_quantities)
