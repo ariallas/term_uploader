@@ -246,7 +246,9 @@ class SqlTransformer:
 
             role_id = self.get_id("physical_quantity_roles", "role_type = '{0}'".format(role))
 
-            dimension_id = self.get_id("dimensions", "dimension_name = '{0}'".format(dimension))
+            dimension_id = "NULL"
+            if dimension is not None:
+                dimension_id = self.get_id("dimensions", "dimension_name = '{0}'".format(dimension))
 
             quantity_id = self.get_or_create_id(
                 "physical_quantities", "lower(quantity_designation) = '{0}'".format(quantity.lower()),
@@ -255,8 +257,9 @@ class SqlTransformer:
             if quantity_id == "currval('physical_quantities_id_seq')":
                 self.sql += "insert into ont.physical_quantities_states values " \
                             "({0}, currval('physical_quantities_id_seq'));\n".format(state_id)
-                self.sql += "insert into ont.physical_quantities_dimensions values " \
-                            "(currval('physical_quantities_id_seq'), {0});\n".format(dimension_id)
+                if dimension is not None:
+                    self.sql += "insert into ont.physical_quantities_dimensions values " \
+                                "(currval('physical_quantities_id_seq'), {0});\n".format(dimension_id)
 
             self.sql += "insert into ont.points_of_measure values"
 
