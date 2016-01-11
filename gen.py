@@ -161,6 +161,11 @@ class XlsReader:
             if row[0].value is not None:
                 self.uncertainties.append((row[0].value, row[1].value, row[2].value))
 
+    def parse_constants(self, rows):
+        for row in rows:
+            if row[0].value is not None:
+                self.constants.append((row[0].value, row[1].value, row[2].value, row[3].value))
+
     def read_table(self, file_name):
         wb = openpyxl.load_workbook(file_name)
         self.sheet = wb.get_sheet_by_name(wb.get_sheet_names()[0])
@@ -185,11 +190,13 @@ class XlsReader:
                 self.parse_table(rows[current_section:next_section])
             elif section_name == 'uncertainties':
                 self.parse_uncertainties(rows[current_section:next_section])
+            elif section_name == 'constants':
+                self.parse_constants(rows[current_section:next_section])
 
             current_section = next_section + 1
             next_section = self.find_next_section(rows, max_row, current_section)
 
-        print(self.arguments)
+        print(self.constants)
         self.extend_data()
         return self.common_data, self.table, self.table_quantities, self.table_dimensions, self.table_roles, \
             self.sources, self.uncertainties_types, self.uncertainties_values, self.table_names
@@ -248,7 +255,8 @@ class SqlTransformer:
 
             dimension_id = "NULL"
             if dimension is not None:
-                dimension_id = self.get_id("dimensions", "dimension_name = '{0}'".format(dimension))
+                dimension_id = self.get_or_create_id("dimensions", "dimension_name = '{0}'".format(dimension),
+                                                     "dimensions_id_seq", "'{0}'".format(dimension))
 
             quantity_id = self.get_or_create_id(
                 "physical_quantities", "lower(quantity_designation) = '{0}'".format(quantity.lower()),
@@ -370,7 +378,7 @@ class SqlTransformer:
         self.insert_points_of_measure(state_id, source_ids, dataset_id)
         self.insert_uncertainties()
 
-        self.sql += "\ncommit;"
+        self.sql += "\nrollback;"
 
         script_file = open(re.sub('\.xls.*', '.sql', file_name), mode='w')
         script_file.write(self.sql)
