@@ -21,6 +21,7 @@ class XlsReader:
         self.table_names = []
 
         self.sources = []
+        self.sources_from_table = []
         self.uncertainties_types = []
         self.uncertainties_values = []
 
@@ -29,6 +30,10 @@ class XlsReader:
         self.constants = []
         self.substance_constants = []
         self.uncertainties = []
+
+        self.const_uncertaities = \
+            ["Standart", "Standart,relative to %", "Extended with a significance level of 95%",
+             "Deviation from the approximating expression", "Precision class"]
 
     def extend_data(self):
         if 'description' not in self.common_data:
@@ -40,11 +45,15 @@ class XlsReader:
 
         for argument in self.arguments:
             if argument[0] not in self.table_quantities and argument[3] is None:
-                raise Exception("Argument {0} not found in table or data".format(argument))
+                raise Exception("Argument {0} not found in table or data".format(argument[0]))
             elif argument[0] not in self.table_quantities:
                 self.table_quantities.append(argument[0])
                 for i in range(len(self.table)):
                     self.table[i].append(argument[3])
+                    if len(self.uncertainties_values[i]) > 0:
+                        self.uncertainties_values[i].append(list(self.uncertainties_values[i][0]))
+                    else:
+                        self.uncertainties_values[i].append([])
 
         for quantity in self.table_quantities:
             functions_designations = [i[0] for i in self.functions]
@@ -71,13 +80,19 @@ class XlsReader:
             self.uncertainties_types.append(uncertainty[0])
 
         for i in range(len(self.table)):
-            self.uncertainties_values.append([])
-            if 'source' in self.common_data:
+            if 'source' in self.common_data and self.sources_from_table[i] is None:
                 self.sources.append(self.common_data['source'])
+            elif self.sources_from_table[i] is not None:
+                self.sources.append(self.sources_from_table[i])
+            else:
+                raise Exception("Source for row {0} not found".format(i))
             for j in range(len(self.table_quantities)):
-                self.uncertainties_values[i].append([])
                 for uncertainty in self.uncertainties:
-                    self.uncertainties_values[i][j].append(uncertainty[1])
+                    if uncertainty[1] is not None:
+                        self.uncertainties_values[i][j].append(uncertainty[1])
+
+        print(self.uncertainties_values)
+        print(self.uncertainties)
 
     @staticmethod
     def find_next_section(rows, max_row, index):
@@ -96,22 +111,40 @@ class XlsReader:
                     j += 1
 
     def parse_table(self, rows):
-        readable_rows = []
+        table_rows = []
+        source_rows = []
+        uncertainty_rows = []
+
         for i in range(len(rows[0])):
-            if rows[0][i].value is not None:
-                readable_rows.append(i)
+            if rows[0][i].value is None:
+                continue
+            elif rows[0][i].value == 'Source':
+                source_rows.append(i)
+            elif rows[0][i].value in self.const_uncertaities:
+                uncertainty_rows.append(i)
+                self.uncertainties.append((rows[0][i].value, None, None))
+            else:
+                table_rows.append(i)
                 self.table_quantities.append(rows[0][i].value)
 
         for i in range(1, len(rows)):
+            self.uncertainties_values.append([])
             if rows[i][0].value is None and rows[i - 1][0].value is None:
                 break
             if rows[i][0].value is None:
                 continue
             row = rows[i]
             read_row = []
-            for j in readable_rows:
-                    read_row.append(row[j].value)
+            for j in table_rows:
+                read_row.append(row[j].value)
+                self.uncertainties_values[-1].append([])
+            for j in source_rows:
+                self.sources_from_table.append(row[j].value)
+            for j in uncertainty_rows:
+                for k in range(len(self.table_quantities)):
+                    self.uncertainties_values[-1][k].append(row[j].value)
             self.table.append(read_row)
+        print(self.uncertainties)
 
     def parse_functions(self, rows):
         for row in rows:
@@ -156,6 +189,7 @@ class XlsReader:
             current_section = next_section + 1
             next_section = self.find_next_section(rows, max_row, current_section)
 
+        print(self.arguments)
         self.extend_data()
         return self.common_data, self.table, self.table_quantities, self.table_dimensions, self.table_roles, \
             self.sources, self.uncertainties_types, self.uncertainties_values, self.table_names
@@ -243,15 +277,18 @@ class SqlTransformer:
         self.sql += "insert into ont.measurement_uncertainties values"
         for i in range(len(self.table_dimensions)):
             for j in range(len(self.table)):
+                was_added = False
                 for k in range(len(uncertainty_type_ids)):
-                    if k == 0:
-                        self.sql += "\n\t(nextval('measurement_uncertainties_id_seq'), {0}, " \
-                                    "nextval('points_of_measure_id_seq_copy'), {1}),".format(
-                                        self.uncertainties_values[j][i][k], uncertainty_type_ids[k])
-                    else:
-                        self.sql += "\n\t(currval('measurement_uncertainties_id_seq'), {0}, " \
-                                    "nextval('points_of_measure_id_seq_copy'), {1}),".format(
-                                        self.uncertainties_values[j][i][k], uncertainty_type_ids[k])
+                    if self.uncertainties_values[j][i][k] is not None:
+                        if not was_added:
+                            self.sql += "\n\t(nextval('measurement_uncertainties_id_seq'), {0}, " \
+                                        "nextval('points_of_measure_id_seq_copy'), {1}),".format(
+                                            self.uncertainties_values[j][i][k], uncertainty_type_ids[k])
+                            was_added = True
+                        else:
+                            self.sql += "\n\t(nextval('measurement_uncertainties_id_seq'), {0}, " \
+                                        "currval('points_of_measure_id_seq_copy'), {1}),".format(
+                                            self.uncertainties_values[j][i][k], uncertainty_type_ids[k])
         self.sql = self.sql[:-1] + ';\n'
 
     def generate_sql(self, file_name, cursor):
@@ -294,9 +331,12 @@ class SqlTransformer:
                                               "data_sources_id_seq",
                                               "'{0}'".format(source))
             if source_id == "currval('data_sources_id_seq')":
-                source_id = source_id + " - " + str(inserted_sources)
                 inserted_sources += 1
             unique_source_ids.append(source_id)
+        for i in range(len(unique_source_ids)):
+            if unique_source_ids[i] == "currval('data_sources_id_seq')":
+                inserted_sources -= 1
+                unique_source_ids[i] += " - " + str(inserted_sources)
         for source in self.sources:
             source_ids.append(unique_source_ids[unique_sources.index(source)])
 
