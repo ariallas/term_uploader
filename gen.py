@@ -22,6 +22,7 @@ class XlsReader:
 
         self.sources = []
         self.sources_from_table = []
+        self.sources_table = []
         self.uncertainties_types = []
         self.uncertainties_values = []
 
@@ -90,11 +91,19 @@ class XlsReader:
                     self.constants[i][4].append(uncertainty[0])
                     self.constants[i][5].append(uncertainty[1])
 
+        constants_designations = [i[0] for i in self.constants]
         for i in range(len(self.table)):
             if 'source' in self.common_data and self.sources_from_table[i] is None:
                 self.sources.append(self.common_data['source'])
             elif self.sources_from_table[i] is not None:
-                self.sources.append(self.sources_from_table[i])
+                was_found = False
+                for source in self.sources_table:
+                    if self.sources_from_table[i] == source[i]:
+                        self.sources.append(source[1])
+                        was_found = True
+                        break
+                if not was_found:
+                    raise Exception("Id for source {0} not found".format(self.sources_from_table[i]))
             else:
                 raise Exception("Source for row {0} not found".format(i))
             for j in range(len(self.table_quantities)):
@@ -111,7 +120,7 @@ class XlsReader:
     def find_next_section(rows, max_row, index):
         for i in range(index, max_row):
             if rows[i][0].value is not None and rows[i][0].value.lower() in [
-                    'functions', 'arguments', 'constants', 'table', 'uncertainties']:
+                    'functions', 'arguments', 'constants', 'table', 'uncertainties', 'sources']:
                 return i
         return max_row
 
@@ -186,6 +195,11 @@ class XlsReader:
                     self.constants[-1][5].append(row[i + 1].value)
                     i += 2
 
+    def parse_sources(self, rows):
+        for row in rows:
+            if row[0].value is not None:
+                self.sources_table.append((row[0].value, row[1].value))
+
     def read_table(self, file_name):
         wb = openpyxl.load_workbook(file_name)
         self.sheet = wb.get_sheet_by_name(wb.get_sheet_names()[0])
@@ -212,6 +226,8 @@ class XlsReader:
                 self.parse_uncertainties(rows[current_section:next_section])
             elif section_name == 'constants':
                 self.parse_constants(rows[current_section:next_section])
+            elif section_name == 'sources':
+                self.parse_sources(rows[current_section:next_section])
 
             current_section = next_section + 1
             next_section = self.find_next_section(rows, max_row, current_section)
