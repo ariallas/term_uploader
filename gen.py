@@ -78,6 +78,9 @@ class XlsReader:
 
         for uncertainty in self.uncertainties:
             self.uncertainties_types.append(uncertainty[0])
+            for i in range(len(self.constants)):
+                self.constants[i][4].append(uncertainty[0])
+                self.constants[i][5].append(uncertainty[1])
 
         for i in range(len(self.table)):
             if 'source' in self.common_data and self.sources_from_table[i] is None:
@@ -164,7 +167,9 @@ class XlsReader:
     def parse_constants(self, rows):
         for row in rows:
             if row[0].value is not None:
-                self.constants.append((row[0].value, row[1].value, row[2].value, row[3].value))
+                self.constants.append([row[0].value, row[1].value, row[2].value, row[3].value])
+                self.constants[-1].append([])
+                self.constants[-1].append([])
 
     def read_table(self, file_name):
         wb = openpyxl.load_workbook(file_name)
@@ -199,7 +204,7 @@ class XlsReader:
         print(self.constants)
         self.extend_data()
         return self.common_data, self.table, self.table_quantities, self.table_dimensions, self.table_roles, \
-            self.sources, self.uncertainties_types, self.uncertainties_values, self.table_names
+            self.sources, self.uncertainties_types, self.uncertainties_values, self.table_names, self.constants
 
 
 class SqlTransformer:
@@ -212,6 +217,7 @@ class SqlTransformer:
         self.table_names = []
         self.sources = []
         self.uncertainties = []
+        self.constants = []
         self.uncertainties_values = []
         self.cursor = None
         self.sql = ""
@@ -242,12 +248,13 @@ class SqlTransformer:
         self.sql += "insert into ont.{0} values (nextval('{1}'), {2});\n".format(table, sequence, values)
         return "currval('{0}')".format(sequence)
 
-    def insert_points_of_measure(self, state_id, source_ids, dataset_id):
-        for i in range(len(self.table_quantities)):
-            quantity = self.table_quantities[i]
-            dimension = self.table_dimensions[i]
-            role = self.table_roles[i]
-            name = self.table_names[i]
+    def insert_points_of_measure(self, table, table_quantities, table_dimensions, table_roles,
+                                 table_names, state_id, source_ids, dataset_id, start_row):
+        for i in range(len(table_quantities)):
+            quantity = table_quantities[i]
+            dimension = table_dimensions[i]
+            role = table_roles[i]
+            name = table_names[i]
 
             self.sql += "\n-- {0} column\n".format(quantity)
 
@@ -271,10 +278,10 @@ class SqlTransformer:
 
             self.sql += "insert into ont.points_of_measure values"
 
-            for j in range(len(self.table)):
-                measure = self.table[j][i]
+            for j in range(len(table)):
+                measure = table[j][i]
                 self.sql += "\n\t(nextval('points_of_measure_id_seq'), {0}, {1}, {2}, {3}, {4}, {5}),".format(
-                    measure, j, dataset_id, source_ids[j], dimension_id, quantity_id)
+                    measure, j + start_row, dataset_id, source_ids[j], dimension_id, quantity_id)
             self.sql = self.sql[:-1] + ';\n'
 
     def insert_uncertainties(self):
@@ -305,7 +312,7 @@ class SqlTransformer:
     def generate_sql(self, file_name, cursor):
         xls_reader = XlsReader()
         self.common_data, self.table, self.table_quantities, self.table_dimensions, self.table_roles, \
-            self.sources, self.uncertainties, self.uncertainties_values, self.table_names \
+            self.sources, self.uncertainties, self.uncertainties_values, self.table_names, self.constants \
             = xls_reader.read_table(file_name)
         self.cursor = cursor
         print(self.common_data)
@@ -375,8 +382,18 @@ class SqlTransformer:
                     "create temp sequence points_of_measure_id_seq_copy;\n" \
                     "select setval('points_of_measure_id_seq_copy', currval('points_of_measure_id_seq'));\n"
 
-        self.insert_points_of_measure(state_id, source_ids, dataset_id)
+        self.insert_points_of_measure(self.table, self.table_quantities, self.table_dimensions, self.table_roles,
+                                      self.table_names, state_id, source_ids, dataset_id, 1)
         self.insert_uncertainties()
+
+        # Inserting constants
+        ctable = [[c[3] for c in self.constants]]
+        ctable_quantities = [c[0] for c in self.constants]
+        ctable_dimensions = [c[2] for c in self.constants]
+        ctable_roles = ['cnst' for c in self.constants]
+        ctable_names = [c[1] for c in self.constants]
+        self.insert_points_of_measure(ctable, ctable_quantities, ctable_dimensions, ctable_roles,
+                                      ctable_names, state_id, source_ids, dataset_id, 0)
 
         self.sql += "\nrollback;"
 
