@@ -1,7 +1,0 @@
-Postgress
-Загружать:
-	select union all select
-	или placeholders
-
-Константы. Сделать разметку.
-chem_subst_quantities - вещества-константы?

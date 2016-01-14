@@ -71,16 +71,24 @@ class XlsReader:
                 self.table_names.append(argument[1])
                 self.table_dimensions.append(argument[2])
             elif quantity in constants_designations:
-                constant = [c for c in self.constants if c[0] == quantity][0]
                 self.table_roles.append('cnst')
             else:
-                raise Exception("Quantity {0} not found in functions/arguments/constants".format(quantity))
+                raise Exception("Quantity {0} not found in functions/arguments/constants "
+                                "and not a source of uncertainty".format(quantity))
 
+        uncertainties_columns = []
         for uncertainty in self.uncertainties:
             self.uncertainties_types.append(uncertainty[0])
+            uncertainties_columns.append([])
+            if uncertainty[2] is None:
+                uncertainties_columns[-1] = None
+            else:
+                uncertainties_columns[-1] = [x.strip() for x in uncertainty[2].split(',')]
+
             for i in range(len(self.constants)):
-                self.constants[i][4].append(uncertainty[0])
-                self.constants[i][5].append(uncertainty[1])
+                if uncertainties_columns[-1] is None or self.constants[i][0] in uncertainties_columns[-1]:
+                    self.constants[i][4].append(uncertainty[0])
+                    self.constants[i][5].append(uncertainty[1])
 
         for i in range(len(self.table)):
             if 'source' in self.common_data and self.sources_from_table[i] is None:
@@ -90,12 +98,14 @@ class XlsReader:
             else:
                 raise Exception("Source for row {0} not found".format(i))
             for j in range(len(self.table_quantities)):
-                for uncertainty in self.uncertainties:
-                    if uncertainty[1] is not None:
+                for k in range(len(self.uncertainties)):
+                    uncertainty = self.uncertainties[k]
+                    if uncertainty[1] is None:
+                        continue
+                    elif uncertainties_columns[k] is None or self.table_quantities[j] in uncertainties_columns[k]:
                         self.uncertainties_values[i][j].append(uncertainty[1])
-
-        print(self.uncertainties_values)
-        print(self.uncertainties)
+                    else:
+                        self.uncertainties_values[i][j].append(None)
 
     @staticmethod
     def find_next_section(rows, max_row, index):
@@ -131,11 +141,11 @@ class XlsReader:
                 self.table_quantities.append(rows[0][i].value)
 
         for i in range(1, len(rows)):
-            self.uncertainties_values.append([])
             if rows[i][0].value is None and rows[i - 1][0].value is None:
                 break
             if rows[i][0].value is None:
                 continue
+            self.uncertainties_values.append([])
             row = rows[i]
             read_row = []
             for j in table_rows:
@@ -170,6 +180,11 @@ class XlsReader:
                 self.constants.append([row[0].value, row[1].value, row[2].value, row[3].value])
                 self.constants[-1].append([])
                 self.constants[-1].append([])
+                i = 4
+                while i + 1 < len(row) and row[i].value is not None and row[i + 1].value is not None:
+                    self.constants[-1][4].append(row[i].value)
+                    self.constants[-1][5].append(row[i + 1].value)
+                    i += 2
 
     def read_table(self, file_name):
         wb = openpyxl.load_workbook(file_name)
@@ -284,29 +299,29 @@ class SqlTransformer:
                     measure, j + start_row, dataset_id, source_ids[j], dimension_id, quantity_id)
             self.sql = self.sql[:-1] + ';\n'
 
-    def insert_uncertainties(self):
+    def insert_uncertainties(self, uncertainties, uncertainties_values, table_dimensions):
         self.sql += "\n-- Uncertainties\n"
 
         uncertainty_type_ids = []
-        for uncertainty in self.uncertainties:
+        for uncertainty in uncertainties:
             uncertainty_type_ids.append(self.get_id("uncertainty_types", "uncertainty_name = '{0}'".format(
                 uncertainty)))
 
         self.sql += "insert into ont.measurement_uncertainties values"
-        for i in range(len(self.table_dimensions)):
-            for j in range(len(self.table)):
+        for i in range(len(table_dimensions)):
+            for j in range(len(uncertainties_values)):
                 was_added = False
                 for k in range(len(uncertainty_type_ids)):
-                    if self.uncertainties_values[j][i][k] is not None:
+                    if uncertainties_values[j][i][k] is not None:
                         if not was_added:
-                            self.sql += "\n\t(nextval('measurement_uncertainties_id_seq'), {0}, " \
+                            self.sql += "\n\t(nextval('measurement_uncertainties_id_seq'), '{0}', " \
                                         "nextval('points_of_measure_id_seq_copy'), {1}),".format(
-                                            self.uncertainties_values[j][i][k], uncertainty_type_ids[k])
+                                            uncertainties_values[j][i][k], uncertainty_type_ids[k])
                             was_added = True
                         else:
-                            self.sql += "\n\t(nextval('measurement_uncertainties_id_seq'), {0}, " \
+                            self.sql += "\n\t(nextval('measurement_uncertainties_id_seq'), '{0}', " \
                                         "currval('points_of_measure_id_seq_copy'), {1}),".format(
-                                            self.uncertainties_values[j][i][k], uncertainty_type_ids[k])
+                                            uncertainties_values[j][i][k], uncertainty_type_ids[k])
         self.sql = self.sql[:-1] + ';\n'
 
     def generate_sql(self, file_name, cursor):
@@ -319,13 +334,17 @@ class SqlTransformer:
         print(self.table_quantities)
         print(self.table_dimensions)
         print(self.table[0])
+        print(self.uncertainties_values)
 
         self.check_data()
 
         self.sql = "begin;\n\n"
 
         # Getting state
-        state_id = self.get_id("states", "lower(state_name) = '{0}'".format(self.common_data['state']))
+        # state_id = self.get_id("states", "lower(state_name) = '{0}'".format(self.common_data['state']))
+        state_id = self.get_or_create_id("states", "lower(state_name) = '{0}'".format(self.common_data['state']),
+                                         "states_id_seq", "'{0}', '{1}'".format(
+                                                 self.common_data['formula'], self.common_data['name']))
 
         # Getting chemical substance
         substance_id = self.get_or_create_id("chemical_substances",
@@ -345,9 +364,10 @@ class SqlTransformer:
         inserted_sources = 0
         for source in unique_sources:
             source_id = self.get_or_create_id("data_sources",
-                                              "data_source_name = '{0}'".format(self.common_data['source']),
+                                              "data_source_name = '{0}'".format(source),
                                               "data_sources_id_seq",
                                               "'{0}'".format(source))
+
             if source_id == "currval('data_sources_id_seq')":
                 inserted_sources += 1
             unique_source_ids.append(source_id)
@@ -384,7 +404,7 @@ class SqlTransformer:
 
         self.insert_points_of_measure(self.table, self.table_quantities, self.table_dimensions, self.table_roles,
                                       self.table_names, state_id, source_ids, dataset_id, 1)
-        self.insert_uncertainties()
+        self.insert_uncertainties(self.uncertainties, self.uncertainties_values, self.table_dimensions)
 
         # Inserting constants
         ctable = [[c[3] for c in self.constants]]
@@ -392,8 +412,24 @@ class SqlTransformer:
         ctable_dimensions = [c[2] for c in self.constants]
         ctable_roles = ['cnst' for c in self.constants]
         ctable_names = [c[1] for c in self.constants]
+        ctable_uncertainties = []
+        ctable_uncertainties_values = [[]]
+        for i in range(len(self.constants)):
+            constant = self.constants[i]
+            for uncertainy in constant[4]:
+                ctable_uncertainties.append(uncertainy)
+        cnt = 0
+        for i in range(len(self.constants)):
+            ctable_uncertainties_values[0].append([])
+            for j in range(len(ctable_uncertainties)):
+                ctable_uncertainties_values[0][i].append(None)
+            for value in self.constants[i][5]:
+                ctable_uncertainties_values[0][i][cnt] = value
+                cnt += 1
+
         self.insert_points_of_measure(ctable, ctable_quantities, ctable_dimensions, ctable_roles,
                                       ctable_names, state_id, source_ids, dataset_id, 0)
+        self.insert_uncertainties(ctable_uncertainties, ctable_uncertainties_values, ctable_dimensions)
 
         self.sql += "\nrollback;"
 
