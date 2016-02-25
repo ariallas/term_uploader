@@ -1,4 +1,4 @@
-?  chem_subst_quantities - отношение quantity-substance???
+﻿a  chem_subst_quantities - отношение quantity-substance - для констант вещества
 a  chemical_substances - название, формула
 a  data_sets - описание файла + substances_in_state_id
 a  data_sources - название
