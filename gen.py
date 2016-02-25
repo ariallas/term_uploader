@@ -60,6 +60,7 @@ class XlsReader:
             functions_designations = [i[0] for i in self.functions]
             arguments_designations = [i[0] for i in self.arguments]
             constants_designations = [i[0] for i in self.constants]
+            substance_constants_designations = [i[0] for i in self.substance_constants]
 
             if quantity in functions_designations:
                 function = [f for f in self.functions if f[0] == quantity][0]
@@ -73,6 +74,8 @@ class XlsReader:
                 self.table_dimensions.append(argument[2])
             elif quantity in constants_designations:
                 self.table_roles.append('cnst')
+            elif quantity in substance_constants_designations:
+                self.table_roles.append('scnst')
             else:
                 raise Exception("Quantity {0} not found in functions/arguments/constants "
                                 "and not a source of uncertainty".format(quantity))
@@ -90,8 +93,11 @@ class XlsReader:
                 if uncertainties_columns[-1] is None or self.constants[i][0] in uncertainties_columns[-1]:
                     self.constants[i][4].append(uncertainty[0])
                     self.constants[i][5].append(uncertainty[1])
+            for i in range(len(self.substance_constants)):
+                if uncertainties_columns[-1] is None or self.substance_constants[i][0] in uncertainties_columns[-1]:
+                    self.substance_constants[i][4].append(uncertainty[0])
+                    self.substance_constants[i][5].append(uncertainty[1])
 
-        constants_designations = [i[0] for i in self.constants]
         for i in range(len(self.table)):
             if 'source' in self.common_data and self.sources_from_table[i] is None:
                 self.sources.append(self.common_data['source'])
@@ -119,8 +125,8 @@ class XlsReader:
     @staticmethod
     def find_next_section(rows, max_row, index):
         for i in range(index, max_row):
-            if rows[i][0].value is not None and rows[i][0].value.lower() in [
-                    'functions', 'arguments', 'constants', 'table', 'uncertainties', 'sources']:
+            if rows[i][0].value is not None and str(rows[i][0].value).lower() in [
+                    'functions', 'arguments', 'constants', 'table', 'uncertainties', 'sources', '']:
                 return i
         return max_row
 
@@ -189,11 +195,13 @@ class XlsReader:
                 self.constants.append([row[0].value, row[1].value, row[2].value, row[3].value])
                 self.constants[-1].append([])
                 self.constants[-1].append([])
-                i = 4
-                while i + 1 < len(row) and row[i].value is not None and row[i + 1].value is not None:
-                    self.constants[-1][4].append(row[i].value)
-                    self.constants[-1][5].append(row[i + 1].value)
-                    i += 2
+
+    def parse_sconstants(self, rows):
+        for row in rows:
+            if row[0].value is not None:
+                self.substance_constants.append([row[0].value, row[1].value, row[2].value, row[3].value])
+                self.substance_constants[-1].append([])
+                self.substance_constants[-1].append([])
 
     def parse_sources(self, rows):
         for row in rows:
@@ -228,6 +236,8 @@ class XlsReader:
                 self.parse_constants(rows[current_section:next_section])
             elif section_name == 'sources':
                 self.parse_sources(rows[current_section:next_section])
+            elif section_name == 'sconstants':
+                self.parse_sconstants(rows[current_section:next_section])
 
             current_section = next_section + 1
             next_section = self.find_next_section(rows, max_row, current_section)
@@ -235,7 +245,8 @@ class XlsReader:
         print(self.constants)
         self.extend_data()
         return self.common_data, self.table, self.table_quantities, self.table_dimensions, self.table_roles, \
-            self.sources, self.uncertainties_types, self.uncertainties_values, self.table_names, self.constants
+            self.sources, self.uncertainties_types, self.uncertainties_values, self.table_names, self.constants, \
+            self.substance_constants
 
 
 class SqlTransformer:
@@ -343,8 +354,8 @@ class SqlTransformer:
     def generate_sql(self, file_name, cursor):
         xls_reader = XlsReader()
         self.common_data, self.table, self.table_quantities, self.table_dimensions, self.table_roles, \
-            self.sources, self.uncertainties, self.uncertainties_values, self.table_names, self.constants \
-            = xls_reader.read_table(file_name)
+            self.sources, self.uncertainties, self.uncertainties_values, self.table_names, self.constants, \
+            self.substance_constants = xls_reader.read_table(file_name)
         self.cursor = cursor
         print(self.common_data)
         print(self.table_quantities)
@@ -423,11 +434,11 @@ class SqlTransformer:
         self.insert_uncertainties(self.uncertainties, self.uncertainties_values, self.table_dimensions)
 
         # Inserting constants
-        ctable = [[c[3] for c in self.constants]]
-        ctable_quantities = [c[0] for c in self.constants]
-        ctable_dimensions = [c[2] for c in self.constants]
-        ctable_roles = ['cnst' for c in self.constants]
-        ctable_names = [c[1] for c in self.constants]
+        ctable =           [[c[3]   for c in self.constants].append([c[3]    for c in self.substance_constants])]
+        ctable_quantities = [c[0]   for c in self.constants].append([c[0]    for c in self.substance_constants])
+        ctable_dimensions = [c[2]   for c in self.constants].append([c[2]    for c in self.substance_constants])
+        ctable_roles =      ['cnst' for c in self.constants].append(['scnst' for c in self.substance_constants])
+        ctable_names =      [c[1]   for c in self.constants].append([c[1]    for c in self.substance_constants])
         ctable_uncertainties = []
         ctable_uncertainties_values = [[]]
         for i in range(len(self.constants)):
