@@ -118,7 +118,7 @@ class XlsReader:
                     if uncertainty[1] is None:
                         continue
                     elif uncertainties_columns[k] is None or self.table_quantities[j] in uncertainties_columns[k]:
-                        self.uncertainties_values[i][j].append(uncertainty[1])
+                        self.uncertainties_values[i][j].append(uncertainty[2])
                     else:
                         self.uncertainties_values[i][j].append(None)
 
