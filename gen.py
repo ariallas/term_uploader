@@ -34,7 +34,7 @@ class XlsReader:
 
         self.const_uncertaities = \
             ["Standart", "Standart,relative to %", "Extended with a significance level of 95%",
-             "Deviation from the approximating expression", "Precision class"]
+             "Deviation from the approximating expression", "Precision class", "Uncertainty 1", "Uncertainty 2"]
 
     def extend_data(self):
         if 'description' not in self.common_data:
@@ -77,26 +77,26 @@ class XlsReader:
             elif quantity in substance_constants_designations:
                 self.table_roles.append('scnst')
             else:
-                raise Exception("Quantity {0} not found in functions/arguments/constants "
-                                "and not a source of uncertainty".format(quantity))
+                raise Exception("Quantity {0} not found in functions/arguments/constants/sconstants/sources "
+                                "and not an ID of uncertainty".format(quantity))
 
         uncertainties_columns = []
         for uncertainty in self.uncertainties:
-            self.uncertainties_types.append(uncertainty[0])
+            self.uncertainties_types.append(uncertainty[1])
             uncertainties_columns.append([])
-            if uncertainty[2] is None:
+            if uncertainty[3] is None:
                 uncertainties_columns[-1] = None
             else:
-                uncertainties_columns[-1] = [x.strip() for x in uncertainty[2].split(',')]
+                uncertainties_columns[-1] = uncertainty[3]
 
             for i in range(len(self.constants)):
                 if uncertainties_columns[-1] is None or self.constants[i][0] in uncertainties_columns[-1]:
-                    self.constants[i][4].append(uncertainty[0])
-                    self.constants[i][5].append(uncertainty[1])
+                    self.constants[i][4].append(uncertainty[1])
+                    self.constants[i][5].append(uncertainty[2])
             for i in range(len(self.substance_constants)):
                 if uncertainties_columns[-1] is None or self.substance_constants[i][0] in uncertainties_columns[-1]:
-                    self.substance_constants[i][4].append(uncertainty[0])
-                    self.substance_constants[i][5].append(uncertainty[1])
+                    self.substance_constants[i][4].append(uncertainty[1])
+                    self.substance_constants[i][5].append(uncertainty[2])
 
         for i in range(len(self.table)):
             if 'source' in self.common_data and self.sources_from_table[i] is None:
@@ -104,7 +104,7 @@ class XlsReader:
             elif self.sources_from_table[i] is not None:
                 was_found = False
                 for source in self.sources_table:
-                    if self.sources_from_table[i] == source[i]:
+                    if self.sources_from_table[i] == source[0]:
                         self.sources.append(source[1])
                         was_found = True
                         break
@@ -126,7 +126,7 @@ class XlsReader:
     def find_next_section(rows, max_row, index):
         for i in range(index, max_row):
             if rows[i][0].value is not None and str(rows[i][0].value).lower() in [
-                    'functions', 'arguments', 'constants', 'table', 'uncertainties', 'sources', '']:
+                    'functions', 'arguments', 'constants', 'table', 'uncertainties', 'sources', 'sconstants']:
                 return i
         return max_row
 
@@ -148,12 +148,17 @@ class XlsReader:
                 continue
             elif rows[0][i].value == 'Source':
                 source_rows.append(i)
-            elif rows[0][i].value in self.const_uncertaities:
+            elif type(rows[0][i].value) is int:
                 uncertainty_rows.append(i)
-                self.uncertainties.append((rows[0][i].value, None, None))
             else:
                 table_rows.append(i)
                 self.table_quantities.append(rows[0][i].value)
+
+        if len(source_rows) > 1:
+            raise Exception("There can only be one source column")
+        elif len(source_rows) == 0:
+            for i in range(1, len(rows)):
+                self.sources_from_table.append(None)
 
         for i in range(1, len(rows)):
             if rows[i][0].value is None and rows[i - 1][0].value is None:
@@ -172,7 +177,6 @@ class XlsReader:
                 for k in range(len(self.table_quantities)):
                     self.uncertainties_values[-1][k].append(row[j].value)
             self.table.append(read_row)
-        print(self.uncertainties)
 
     def parse_functions(self, rows):
         for row in rows:
@@ -187,7 +191,10 @@ class XlsReader:
     def parse_uncertainties(self, rows):
         for row in rows:
             if row[0].value is not None:
-                self.uncertainties.append((row[0].value, row[1].value, row[2].value))
+                self.uncertainties.append((row[0].value, row[1].value, row[2].value, []))
+                if row[3].value is not None:
+                    for quantity in [x.strip() for x in row[3].value.split(',')]:
+                        self.uncertainties[-1][3].append(quantity)
 
     def parse_constants(self, rows):
         for row in rows:
@@ -242,7 +249,6 @@ class XlsReader:
             current_section = next_section + 1
             next_section = self.find_next_section(rows, max_row, current_section)
 
-        print(self.constants)
         self.extend_data()
         return self.common_data, self.table, self.table_quantities, self.table_dimensions, self.table_roles, \
             self.sources, self.uncertainties_types, self.uncertainties_values, self.table_names, self.constants, \
@@ -327,12 +333,18 @@ class SqlTransformer:
             self.sql = self.sql[:-1] + ';\n'
 
     def insert_uncertainties(self, uncertainties, uncertainties_values, table_dimensions):
+        if len(uncertainties) == 0:
+            return
+
         self.sql += "\n-- Uncertainties\n"
 
         uncertainty_type_ids = []
         for uncertainty in uncertainties:
-            uncertainty_type_ids.append(self.get_id("uncertainty_types", "uncertainty_name = '{0}'".format(
-                uncertainty)))
+            uncertainty_type_ids.append(self.get_or_create_id(
+                "uncertainty_types",
+                "uncertainty_name = '{0}'".format(uncertainty),
+                "uncertainty_types_id_seq",
+                "'{0}'".format(uncertainty)))
 
         self.sql += "insert into ont.measurement_uncertainties values"
         for i in range(len(table_dimensions)):
@@ -357,12 +369,6 @@ class SqlTransformer:
             self.sources, self.uncertainties, self.uncertainties_values, self.table_names, self.constants, \
             self.substance_constants = xls_reader.read_table(file_name)
         self.cursor = cursor
-        print(self.common_data)
-        print(self.table_quantities)
-        print(self.table_dimensions)
-        print(self.table[0])
-        print(self.uncertainties_values)
-
         self.check_data()
 
         self.sql = "begin;\n\n"
@@ -434,11 +440,11 @@ class SqlTransformer:
         self.insert_uncertainties(self.uncertainties, self.uncertainties_values, self.table_dimensions)
 
         # Inserting constants
-        ctable =           [[c[3]   for c in self.constants].append([c[3]    for c in self.substance_constants])]
-        ctable_quantities = [c[0]   for c in self.constants].append([c[0]    for c in self.substance_constants])
-        ctable_dimensions = [c[2]   for c in self.constants].append([c[2]    for c in self.substance_constants])
-        ctable_roles =      ['cnst' for c in self.constants].append(['scnst' for c in self.substance_constants])
-        ctable_names =      [c[1]   for c in self.constants].append([c[1]    for c in self.substance_constants])
+        ctable =           [[c[3]   for c in self.constants] + [c[3]    for c in self.substance_constants]]
+        ctable_quantities = [c[0]   for c in self.constants] + [c[0]    for c in self.substance_constants]
+        ctable_dimensions = [c[2]   for c in self.constants] + [c[2]    for c in self.substance_constants]
+        ctable_roles =      ['cnst' for c in self.constants] + ['scnst' for c in self.substance_constants]
+        ctable_names =      [c[1]   for c in self.constants] + [c[1]    for c in self.substance_constants]
         ctable_uncertainties = []
         ctable_uncertainties_values = [[]]
         for i in range(len(self.constants)):

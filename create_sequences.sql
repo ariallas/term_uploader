@@ -7,6 +7,7 @@ create sequence measurement_uncertainties_id_seq;
 create sequence physical_quantities_id_seq;
 create sequence dimensions_id_seq;
 create sequence states_id_seq;
+create sequence uncertainty_types_id_seq;
 
 select setval('chemical_substances_id_seq', (select max(id) from ont.chemical_substances));
 select setval('data_sets_id_seq', (select max(id) from ont.data_sets));
@@ -16,4 +17,4 @@ select setval('data_sources_id_seq', (select max(id) from ont.data_sources));
 select setval('measurement_uncertainties_id_seq', (select max(id) from ont.measurement_uncertainties));
 select setval('physical_quantities_id_seq', (select max(id) from ont.physical_quantities));
 select setval('dimensions_id_seq', (select max(id) from ont.dimensions));
-select setval('states_id_seq', (select max(id) from ont.states));
+select setval('uncertainty_types_id_seq', (select max(id) from ont.uncertainty_types));
