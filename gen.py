@@ -32,10 +32,6 @@ class XlsReader:
         self.substance_constants = []
         self.uncertainties = []
 
-        self.const_uncertaities = \
-            ["Standart", "Standart,relative to %", "Extended with a significance level of 95%",
-             "Deviation from the approximating expression", "Precision class", "Uncertainty 1", "Uncertainty 2"]
-
     def extend_data(self):
         if 'description' not in self.common_data:
             self.common_data['description'] = 'there are no information'
@@ -112,10 +108,15 @@ class XlsReader:
                     raise Exception("Id for source {0} not found".format(self.sources_from_table[i]))
             else:
                 raise Exception("Source for row {0} not found".format(i))
+            print(self.uncertainties)
+            print(uncertainties_columns)
             for j in range(len(self.table_quantities)):
                 for k in range(len(self.uncertainties)):
                     uncertainty = self.uncertainties[k]
-                    if uncertainty[1] is None:
+                    if uncertainty[2] is None:
+                        if uncertainties_columns[k] is not None and \
+                                self.table_quantities[j] not in uncertainties_columns[k]:
+                            self.uncertainties_values[i][j][k] = None
                         continue
                     elif uncertainties_columns[k] is None or self.table_quantities[j] in uncertainties_columns[k]:
                         self.uncertainties_values[i][j].append(uncertainty[2])
@@ -261,6 +262,7 @@ class SqlTransformer:
         self.table = []
         self.table_quantities = []
         self.table_dimensions = []
+        self.substance_constants = []
         self.table_roles = []
         self.table_names = []
         self.sources = []
@@ -339,28 +341,30 @@ class SqlTransformer:
         self.sql += "\n-- Uncertainties\n"
 
         uncertainty_type_ids = []
+        uncertainties_added = 0
         for uncertainty in uncertainties:
-            uncertainty_type_ids.append(self.get_or_create_id(
+            uncertainty_id = self.get_or_create_id(
                 "uncertainty_types",
                 "uncertainty_name = '{0}'".format(uncertainty),
                 "uncertainty_types_id_seq",
-                "'{0}'".format(uncertainty)))
+                "'{0}'".format(uncertainty))
+            uncertainty_type_ids.append(uncertainty_id)
+        for i in range(len(uncertainties) - 1, -1, -1):
+            if uncertainty_type_ids[i] == "currval('uncertainty_types_id_seq')":
+                uncertainty_type_ids[i] += " - {0}".format(uncertainties_added)
+                uncertainties_added += 1
 
         self.sql += "insert into ont.measurement_uncertainties values"
         for i in range(len(table_dimensions)):
             for j in range(len(uncertainties_values)):
-                was_added = False
                 for k in range(len(uncertainty_type_ids)):
                     if uncertainties_values[j][i][k] is not None:
-                        if not was_added:
-                            self.sql += "\n\t(nextval('measurement_uncertainties_id_seq'), '{0}', " \
-                                        "nextval('points_of_measure_id_seq_copy'), {1}),".format(
-                                            uncertainties_values[j][i][k], uncertainty_type_ids[k])
-                            was_added = True
-                        else:
-                            self.sql += "\n\t(nextval('measurement_uncertainties_id_seq'), '{0}', " \
-                                        "currval('points_of_measure_id_seq_copy'), {1}),".format(
-                                            uncertainties_values[j][i][k], uncertainty_type_ids[k])
+                        self.sql += "\n\t(nextval('measurement_uncertainties_id_seq'), '{0}', " \
+                                    "currval('points_of_measure_id_seq') - {1}, {2}),".format(
+                                        uncertainties_values[j][i][k],
+                                        (len(uncertainties_values) * len(table_dimensions)) -
+                                        i*len(table_dimensions) - j*len(uncertainties_values),
+                                        uncertainty_type_ids[k])
         self.sql = self.sql[:-1] + ';\n'
 
     def generate_sql(self, file_name, cursor):
@@ -429,11 +433,6 @@ class SqlTransformer:
         dataset_id = self.create_id("data_sets", "data_sets_id_seq", "'{0}', '{1}', '{2}', {3}".format(
             file_name, self.common_data['description'], re.sub('-', '', str(datetime.date.today())),
             substance_in_state_id))
-
-        # Creating temporary points of measure sequence copy
-        self.sql += "\ndrop sequence if exists points_of_measure_id_seq_copy;\n" \
-                    "create temp sequence points_of_measure_id_seq_copy;\n" \
-                    "select setval('points_of_measure_id_seq_copy', currval('points_of_measure_id_seq'));\n"
 
         self.insert_points_of_measure(self.table, self.table_quantities, self.table_dimensions, self.table_roles,
                                       self.table_names, state_id, source_ids, dataset_id, 1)
