@@ -108,8 +108,6 @@ class XlsReader:
                     raise Exception("Id for source {0} not found".format(self.sources_from_table[i]))
             else:
                 raise Exception("Source for row {0} not found".format(i))
-            print(self.uncertainties)
-            print(uncertainties_columns)
             for j in range(len(self.table_quantities)):
                 for k in range(len(self.uncertainties)):
                     uncertainty = self.uncertainties[k]
@@ -355,16 +353,17 @@ class SqlTransformer:
                 uncertainties_added += 1
 
         self.sql += "insert into ont.measurement_uncertainties values"
-        for i in range(len(table_dimensions)):
-            for j in range(len(uncertainties_values)):
+        point_offset = 0
+        for i in range(len(table_dimensions) - 1, -1, -1):
+            for j in range(len(uncertainties_values) - 1, -1, -1):
                 for k in range(len(uncertainty_type_ids)):
                     if uncertainties_values[j][i][k] is not None:
                         self.sql += "\n\t(nextval('measurement_uncertainties_id_seq'), '{0}', " \
                                     "currval('points_of_measure_id_seq') - {1}, {2}),".format(
                                         uncertainties_values[j][i][k],
-                                        (len(uncertainties_values) * len(table_dimensions)) -
-                                        i*len(table_dimensions) - j*len(uncertainties_values),
+                                        point_offset,
                                         uncertainty_type_ids[k])
+                point_offset += 1
         self.sql = self.sql[:-1] + ';\n'
 
     def generate_sql(self, file_name, cursor):
