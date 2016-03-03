@@ -327,12 +327,30 @@ class SqlTransformer:
                 "physical_quantities", "lower(quantity_designation) = '{0}'".format(quantity.lower()),
                 "physical_quantities_id_seq",
                 "'{0}', '{1}', {2}".format(quantity, name, role_id))
-            if quantity_id == "currval('physical_quantities_id_seq')":
-                self.sql += "insert into ont.physical_quantities_states values " \
-                            "({0}, currval('physical_quantities_id_seq'));\n".format(state_id)
-                if dimension is not None:
-                    self.sql += "insert into ont.physical_quantities_dimensions values " \
-                                "(currval('physical_quantities_id_seq'), {0});\n".format(dimension_id)
+
+            if quantity_id == "currval('physical_quantities_id_seq')" or state_id == "currval('states_id_seq')":
+                self.sql += "insert into ont.physical_quantities_states values ({0}, {1});\n".format(state_id,
+                                                                                                      quantity_id)
+            else:
+                self.cursor.execute("select state_id from ont.physical_quantities_states where "
+                                    "physical_quantity_id = {0} and state_id = {1}".format(quantity_id, state_id))
+                found_id = self.cursor.fetchone()
+                if found_id is None:
+                    self.sql += "insert into ont.physical_quantities_states values ({0}, {1});\n".format(state_id,
+                                                                                                          quantity_id)
+
+            if dimension_id is not None and (quantity_id == "currval('physical_quantities_id_seq')"
+                                             or dimension_id == "currval('dimensions_id_seq')"):
+                self.sql += "insert into ont.physical_quantities_dimensions values ({0}, {1});\n".format(quantity_id,
+                                                                                                         dimension_id)
+            else:
+                self.cursor.execute("select quantity_id from ont.physical_quantities_dimensions where "
+                                    "quantity_id = {0} and dimension_id = {1}".format(quantity_id, dimension_id))
+                found_id = self.cursor.fetchone()
+                if found_id is None:
+                    self.sql += "insert into ont.physical_quantities_dimensions values ({0}, {1});\n"\
+                        .format(quantity_id,
+                                dimension_id)
 
             self.sql += "insert into ont.points_of_measure values"
 
