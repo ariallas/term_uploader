@@ -25,6 +25,7 @@ class XlsReader:
         self.sources_table = []
         self.uncertainties_types = []
         self.uncertainties_values = []
+        self.table_uncertainty_ids = []
 
         self.functions = []
         self.arguments = []
@@ -80,7 +81,7 @@ class XlsReader:
         for uncertainty in self.uncertainties:
             self.uncertainties_types.append(uncertainty[1])
             uncertainties_columns.append([])
-            if uncertainty[3] is None:
+            if len(uncertainty[3]) == 0:
                 uncertainties_columns[-1] = None
             else:
                 uncertainties_columns[-1] = uncertainty[3]
@@ -94,6 +95,7 @@ class XlsReader:
                     self.substance_constants[i][4].append(uncertainty[1])
                     self.substance_constants[i][5].append(uncertainty[2])
 
+        print(self.uncertainties)
         for i in range(len(self.table)):
             if 'source' in self.common_data and self.sources_from_table[i] is None:
                 self.sources.append(self.common_data['source'])
@@ -116,10 +118,15 @@ class XlsReader:
                                 self.table_quantities[j] not in uncertainties_columns[k]:
                             self.uncertainties_values[i][j][k] = None
                         continue
+                    # elif uncertainties_columns[k] is None or self.table_quantities[j] in uncertainties_columns[k]:
+                    #     self.uncertainties_values[i][j].append(uncertainty[2])
+                    # else:
+                    #     self.uncertainties_values[i][j].append(None)
                     elif uncertainties_columns[k] is None or self.table_quantities[j] in uncertainties_columns[k]:
-                        self.uncertainties_values[i][j].append(uncertainty[2])
+                        self.uncertainties_values[i][j].insert(k, uncertainty[2])
                     else:
-                        self.uncertainties_values[i][j].append(None)
+                        self.uncertainties_values[i][j].insert(k, None)
+            print(self.uncertainties_values)
 
     @staticmethod
     def find_next_section(rows, max_row, index):
@@ -149,6 +156,7 @@ class XlsReader:
                 source_rows.append(i)
             elif type(rows[0][i].value) is int:
                 uncertainty_rows.append(i)
+                self.table_uncertainty_ids.append(rows[0][i].value)
             else:
                 table_rows.append(i)
                 self.table_quantities.append(rows[0][i].value)
@@ -175,6 +183,7 @@ class XlsReader:
             for j in uncertainty_rows:
                 for k in range(len(self.table_quantities)):
                     self.uncertainties_values[-1][k].append(row[j].value)
+            print(self.uncertainties_values)
             self.table.append(read_row)
 
     def parse_functions(self, rows):
@@ -194,6 +203,7 @@ class XlsReader:
                 if row[3].value is not None:
                     for quantity in [x.strip() for x in row[3].value.split(',')]:
                         self.uncertainties[-1][3].append(quantity)
+        print(self.uncertainties)
 
     def parse_constants(self, rows):
         for row in rows:
@@ -377,7 +387,6 @@ class SqlTransformer:
         self.sql = "begin;\n\n"
 
         # Getting state
-        # state_id = self.get_id("states", "lower(state_name) = '{0}'".format(self.common_data['state']))
         state_id = self.get_or_create_id("states", "lower(state_name) = '{0}'".format(self.common_data['state']),
                                          "states_id_seq", "'{0}', '{1}'".format(
                                                  self.common_data['formula'], self.common_data['name']))
