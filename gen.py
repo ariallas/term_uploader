@@ -307,7 +307,7 @@ class SqlTransformer:
         return "currval('{0}')".format(sequence)
 
     def insert_points_of_measure(self, table, table_quantities, table_dimensions, table_roles,
-                                 table_names, state_id, source_ids, dataset_id, start_row):
+                                 table_names, state_id, source_ids, dataset_id, substance_id, start_row):
         for i in range(len(table_quantities)):
             quantity = table_quantities[i]
             dimension = table_dimensions[i]
@@ -328,22 +328,34 @@ class SqlTransformer:
                 "physical_quantities_id_seq",
                 "'{0}', '{1}', {2}".format(quantity, name, role_id))
 
-            if quantity_id == "currval('physical_quantities_id_seq')" or state_id == "currval('states_id_seq')":
-                self.sql += "insert into ont.physical_quantities_states values ({0}, {1});\n".format(state_id,
-                                                                                                      quantity_id)
+            if role == 'scnst':
+                if quantity_id == "currval('physical_quantities_id_seq')":
+                    self.sql += "insert into ont.chem_subst_quantities values ({0}, {1});\n".format(quantity_id,
+                                                                                                    substance_id)
+                else:
+                    self.cursor.execute("select quantity_id from ont.chem_subst_quantities where "
+                                        "quantity_id = {0} and substance_id = {1}".format(quantity_id, substance_id))
+                    found_id = self.cursor.fetchone()
+                    if found_id is None:
+                        self.sql += "insert into ont.chem_subst_quantities values ({0}, {1});\n".format(quantity_id,
+                                                                                                        substance_id)
             else:
-                self.cursor.execute("select state_id from ont.physical_quantities_states where "
-                                    "physical_quantity_id = {0} and state_id = {1}".format(quantity_id, state_id))
-                found_id = self.cursor.fetchone()
-                if found_id is None:
+                if quantity_id == "currval('physical_quantities_id_seq')" or state_id == "currval('states_id_seq')":
                     self.sql += "insert into ont.physical_quantities_states values ({0}, {1});\n".format(state_id,
                                                                                                           quantity_id)
+                else:
+                    self.cursor.execute("select state_id from ont.physical_quantities_states where "
+                                        "physical_quantity_id = {0} and state_id = {1}".format(quantity_id, state_id))
+                    found_id = self.cursor.fetchone()
+                    if found_id is None:
+                        self.sql += "insert into ont.physical_quantities_states values ({0}, {1});\n".format(state_id,
+                                                                                                            quantity_id)
 
-            if dimension_id is not None and (quantity_id == "currval('physical_quantities_id_seq')"
+            if dimension is not None and (quantity_id == "currval('physical_quantities_id_seq')"
                                              or dimension_id == "currval('dimensions_id_seq')"):
                 self.sql += "insert into ont.physical_quantities_dimensions values ({0}, {1});\n".format(quantity_id,
                                                                                                          dimension_id)
-            else:
+            elif dimension is not None:
                 self.cursor.execute("select quantity_id from ont.physical_quantities_dimensions where "
                                     "quantity_id = {0} and dimension_id = {1}".format(quantity_id, dimension_id))
                 found_id = self.cursor.fetchone()
@@ -461,7 +473,7 @@ class SqlTransformer:
             substance_in_state_id))
 
         self.insert_points_of_measure(self.table, self.table_quantities, self.table_dimensions, self.table_roles,
-                                      self.table_names, state_id, source_ids, dataset_id, 1)
+                                      self.table_names, state_id, source_ids, dataset_id, substance_id, 1)
         self.insert_uncertainties(self.uncertainties, self.uncertainties_values, self.table_dimensions)
 
         # Inserting constants
@@ -486,7 +498,7 @@ class SqlTransformer:
                 cnt += 1
 
         self.insert_points_of_measure(ctable, ctable_quantities, ctable_dimensions, ctable_roles,
-                                      ctable_names, state_id, source_ids, dataset_id, 0)
+                                      ctable_names, state_id, source_ids, dataset_id, substance_id, 0)
         self.insert_uncertainties(ctable_uncertainties, ctable_uncertainties_values, ctable_dimensions)
 
         self.sql += "\nrollback;"
