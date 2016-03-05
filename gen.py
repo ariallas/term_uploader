@@ -95,7 +95,6 @@ class XlsReader:
                     self.substance_constants[i][4].append(uncertainty[1])
                     self.substance_constants[i][5].append(uncertainty[2])
 
-        print(self.uncertainties)
         for i in range(len(self.table)):
             if 'source' in self.common_data and self.sources_from_table[i] is None:
                 self.sources.append(self.common_data['source'])
@@ -126,7 +125,6 @@ class XlsReader:
                         self.uncertainties_values[i][j].insert(k, uncertainty[2])
                     else:
                         self.uncertainties_values[i][j].insert(k, None)
-            print(self.uncertainties_values)
 
     @staticmethod
     def find_next_section(rows, max_row, index):
@@ -183,7 +181,6 @@ class XlsReader:
             for j in uncertainty_rows:
                 for k in range(len(self.table_quantities)):
                     self.uncertainties_values[-1][k].append(row[j].value)
-            print(self.uncertainties_values)
             self.table.append(read_row)
 
     def parse_functions(self, rows):
@@ -203,7 +200,6 @@ class XlsReader:
                 if row[3].value is not None:
                     for quantity in [x.strip() for x in row[3].value.split(',')]:
                         self.uncertainties[-1][3].append(quantity)
-        print(self.uncertainties)
 
     def parse_constants(self, rows):
         for row in rows:
@@ -488,6 +484,10 @@ class SqlTransformer:
             constant = self.constants[i]
             for uncertainy in constant[4]:
                 ctable_uncertainties.append(uncertainy)
+        for i in range(len(self.substance_constants)):
+            constant = self.substance_constants[i]
+            for uncertainy in constant[4]:
+                ctable_uncertainties.append(uncertainy)
         cnt = 0
         for i in range(len(self.constants)):
             ctable_uncertainties_values[0].append([])
@@ -496,7 +496,15 @@ class SqlTransformer:
             for value in self.constants[i][5]:
                 ctable_uncertainties_values[0][i][cnt] = value
                 cnt += 1
+        for i in range(len(self.substance_constants)):
+            ctable_uncertainties_values[0].append([])
+            for j in range(len(ctable_uncertainties)):
+                ctable_uncertainties_values[0][i].append(None)
+            for value in self.substance_constants[i][5]:
+                ctable_uncertainties_values[0][i][cnt] = value
+                cnt += 1
 
+        print(ctable_uncertainties)
         self.insert_points_of_measure(ctable, ctable_quantities, ctable_dimensions, ctable_roles,
                                       ctable_names, state_id, source_ids, dataset_id, substance_id, 0)
         self.insert_uncertainties(ctable_uncertainties, ctable_uncertainties_values, ctable_dimensions)
